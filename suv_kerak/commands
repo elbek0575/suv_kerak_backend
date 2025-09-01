@@ -1,0 +1,38 @@
+янги SECRET_KEY тузиш ккомандаси:
+python -c 'from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())'
+
+Запуск ngrok
+D:\Install\ngrok\ngrok.exe http 8000
+
+Деплой килмаган вактда шу командани териш керак. HEROKU_API_KEY бекор килинади ва логин оркали деплой булади.
+Remove-Item Env:HEROKU_API_KEY
+heroku login
+
+
+git add .
+git commit -m "Проект ёзишда давоми"
+git push heroku main
+
+git add .
+git branch -M main
+git push -u origin main
+
+heroku run python manage.py collectstatic -a ecohisob-backend
+
+python manage.py runserver
+
+Миграция килиш
+python manage.py makemigrations accounts
+python manage.py migrate
+
+
+python bot/tg_bot.py
+
+
+pip freeze > requirements.txt
+
+
+Remove-Item Env:HEROKU_API_KEY
+heroku login
+heroku repo:purge_cache -a ecohisob-backend
+git push heroku main
