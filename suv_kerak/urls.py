@@ -17,9 +17,14 @@ Including another URLconf
 # suv_kerak/urls.py
 from django.contrib import admin
 from django.urls import path, include
+from django.shortcuts import redirect
+
+def root(request):
+    return redirect("/admin/")
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    #path('finance/', include('finance.urls')),
+    path("", root, name="root"),          # ← ру́тни админга йўналтирамиз
+    path("admin/", admin.site.urls),
+    path("finance/", include("finance.urls")),
 ]
 
