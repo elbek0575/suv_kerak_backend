@@ -1,10 +1,11 @@
 <form action="/i18n/setlang/" method="post">{% csrf_token %}
   <select name="language">
-    <option value="uz">Ўзбек тили</option>
+    <option value="uz">Ўзбек тили (Кирилл)</option>
+    <option value="uz-Latn">Oʻzbek tili (Lotin)</option>
     <option value="ru">Русский</option>
-    <option value="uz_lat">Oʻzbek tili</option>
     <option value="en">English</option>
   </select>
   <input type="hidden" name="next" value="/admin/">
   <button type="submit">OK</button>
 </form>
+
