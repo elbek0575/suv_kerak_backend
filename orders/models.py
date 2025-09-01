@@ -47,6 +47,8 @@ class Buyurtma(models.Model):
 
     class Meta:
         db_table = "buyurtmalar"
+        verbose_name = "Буюртма"
+        verbose_name_plural = "Буюртмалар"
         indexes = [
             models.Index(fields=["business", "sana"], name="idx_buyurtma_biz_sana"),
             models.Index(fields=["business", "buyurtma_statusi"], name="idx_buyurtma_biz_status"),

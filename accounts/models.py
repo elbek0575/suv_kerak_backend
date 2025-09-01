@@ -59,7 +59,7 @@ class UserBoss(models.Model):
     class Meta:
         db_table = "user_boss"   # PostgreSQL'да default schema 'public', шунинг учун тўлиқ 'public.user_boss' шарт эмас
         verbose_name = "Boss"
-        verbose_name_plural = "Bosslar"
+        verbose_name_plural = "Босс турдаги фойдаланувчилар"
         indexes = [
             models.Index(fields=["boss_id"], name="idx_userboss_bossid"),
         ]

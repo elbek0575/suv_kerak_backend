@@ -29,6 +29,8 @@ class CashBoss(models.Model):
 
     class Meta:
         db_table = "cash_boss"
+        verbose_name = "Босс касса ҳисоби"
+        verbose_name_plural = "Босс касса ҳисоби"
         indexes = [
             models.Index(fields=["business", "boss_id"]),
             models.Index(fields=["business", "kuryer_id"]),
@@ -74,6 +76,8 @@ class CashState(models.Model):
 
     class Meta:
         db_table = "cash_state"
+        verbose_name = "Касса ҳолати"
+        verbose_name_plural = "Касса ҳолати"
         indexes = [
             models.Index(fields=["business", "boss_id", "status"]),
             models.Index(fields=["business", "kuryer_id", "status"]),
@@ -178,8 +182,8 @@ class CashKuryer(models.Model):
 
     class Meta:
         db_table = "cash_kuryer"
-        verbose_name = "Kuryer Kassa"
-        verbose_name_plural = "Kuryer Kassalari"
+        verbose_name = "Курер касса ҳисоби"
+        verbose_name_plural = "Курер касса ҳисоби"
         indexes = [
             models.Index(fields=["boss_id"], name="idx_ck_boss"),
             models.Index(fields=["kuryer_id"], name="idx_ck_kuryer"),
@@ -256,8 +260,8 @@ class CourierWaterBottleBalance(models.Model):
 
     class Meta:
         db_table = "kuryer_water_bottle_balance"
-        verbose_name = "Kuryer Water/Bottle Balance"
-        verbose_name_plural = "Kuryer Water/Bottle Balances"
+        verbose_name = "Курер сув ва тара ҳисоби"
+        verbose_name_plural = "Курер сув ва тара ҳисоби"
         indexes = [
             models.Index(fields=["business", "kuryer_id", "sana", "vaqt"], name="idx_kwbb_kur_dt"),
             models.Index(fields=["business", "boss_id"], name="idx_kwbb_boss"),
@@ -321,5 +325,81 @@ class CourierWaterBottleBalance(models.Model):
             # Ҳар иккала баланс бир хил қадам билан ўзгаради
             self.water_balance = max(0, prev_water + delta)
             self.bottle_balance = max(0, prev_bottle + delta)
+
+        super().save(*args, **kwargs)
+        
+
+class BossSystemAccount(models.Model):
+    """
+    Босс (тадбиркор) ва тизим ҳисоб-китоб жадвали.
+    - income: Босс онлайн тўлов қилиб балансини тўлдирди
+    - expense: Сув сотилганда тизим ҳисобидан ечилди
+    """
+    id = models.BigAutoField(primary_key=True)
+    business = models.ForeignKey(Business, on_delete=models.PROTECT)  # қайси тадбиркор
+
+    sana = models.DateField()
+    vaqt = models.TimeField()
+
+    # 💰 Суммалар
+    income = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    expense = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    OPERATION = (
+        ("income", "Income (Top-up)"),
+        ("expense", "Expense (Water Sale)"),
+        ("promo", "Promo/Free"),  # акция ёки рекламадан
+    )
+    operation = models.CharField(max_length=10, choices=OPERATION)
+
+    # Изоҳ / лог
+    note = models.CharField(max_length=255, blank=True, null=True)
+
+    grated = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "boss_system_account"
+        verbose_name = "Тизим ҳисоби"
+        verbose_name_plural = "Тизим ҳисоби"
+        indexes = [
+            models.Index(fields=["business", "sana"], name="idx_bsa_biz_sana"),
+            models.Index(fields=["business", "operation"], name="idx_bsa_biz_op"),
+        ]
+
+    def __str__(self):
+        return f"{self.sana} {self.vaqt} | {self.business.name} | Balance: {self.balance}"
+
+    def clean(self):
+        super().clean()
+        if self.operation == "income":
+            if self.income <= 0 or self.expense != 0:
+                raise ValidationError("Income учун income>0 ва expense=0 бўлиши керак.")
+        elif self.operation == "expense":
+            if self.expense <= 0 or self.income != 0:
+                raise ValidationError("Expense учун expense>0 ва income=0 бўлиши керак.")
+        elif self.operation == "promo":
+            if self.income != 0 or self.expense != 0:
+                raise ValidationError("Promo операциясида income=0 ва expense=0 бўлиши керак.")
+
+    def save(self, *args, **kwargs):
+        # Олдинги балансни олиб, янгилаймиз
+        last = (
+            BossSystemAccount.objects
+            .filter(business=self.business)
+            .order_by("-grated")
+            .first()
+        )
+        prev_balance = last.balance if last else 0
+
+        if self.operation == "income":
+            self.balance = prev_balance + self.income
+            self.note = self.note or "Босс балансини онлайн тўлдирди"
+        elif self.operation == "expense":
+            self.balance = prev_balance - self.expense
+            self.note = self.note or "Сув сотилди, ҳисобдан ечилди"
+        elif self.operation == "promo":
+            self.balance = prev_balance
+            self.note = self.note or "Акция/реклама — хақ олинмади"
 
         super().save(*args, **kwargs)

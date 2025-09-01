@@ -1,7 +1,7 @@
 # finance/admin.py
 from django.contrib import admin
 from django.utils import timezone
-from .models import CashBoss, CashState, CourierWaterBottleBalance
+from .models import CashBoss, CashState, CourierWaterBottleBalance, BossSystemAccount, CashKuryer
 
 @admin.register(CashBoss)
 class CashBossAdmin(admin.ModelAdmin):
@@ -40,3 +40,36 @@ class CourierWaterBottleBalanceAdmin(admin.ModelAdmin):
     list_filter  = ("business", "operation", "status", "sana")
     search_fields = ("kuryer_name", "kuryer_id", "client_tel_num", "boss_name")
     readonly_fields = ("water_balance", "bottle_balance", "grated")
+    
+@admin.register(BossSystemAccount)
+class BossSystemAccountAdmin(admin.ModelAdmin):
+    list_display = (
+        "id", "sana", "vaqt", "business", "operation",
+        "income", "expense", "balance", "note", "grated",
+    )
+    list_filter = ("business", "operation", "sana")
+    search_fields = ("business__name",)
+    date_hierarchy = "sana"
+    ordering = ("-grated",)
+
+    readonly_fields = ("balance", "grated")  # баланс авт. ҳисобланади
+    fieldsets = (
+        ("Вақт ва тадбиркор", {
+            "fields": ("business", "sana", "vaqt")
+        }),
+        ("Операция", {
+            "fields": ("operation", "income", "expense", "note")
+        }),
+        ("Қолдиқ", {
+            "fields": ("balance", "grated")
+        }),
+    )
+
+@admin.register(CashKuryer)
+class CashKuryerAdmin(admin.ModelAdmin):
+    list_display = ("id", "sana", "vaqt", "kuryer_name",
+                    "cash_operation", "income", "expense",
+                    "balance", "status", "grated")
+    list_filter = ("status", "cash_operation", "sana")
+    search_fields = ("kuryer_name", "kuryer_id", "client_tel_num", "boss_name")
+    readonly_fields = ("balance",)
