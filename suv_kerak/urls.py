@@ -18,14 +18,25 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from django.shortcuts import redirect
+from django.conf import settings
+from django.utils import translation
 
-def root(request):
-    return redirect("/admin/")
 
 urlpatterns = [
-    path("", root, name="root"),# ← ру́тни админга йўналтирамиз
-    path("i18n/", include("django.conf.urls.i18n")),
     path("admin/", admin.site.urls),
     path("finance/", include("finance.urls")),
+    path("i18n/", include("django.conf.urls.i18n")),  # /i18n/setlang (POST)
 ]
+
+
+
+# def root(request):
+#     return redirect("/admin/")
+
+# urlpatterns = [
+#     path("", root, name="root"),# ← ру́тни админга йўналтирамиз
+#     path("i18n/", include("django.conf.urls.i18n")),
+#     path("admin/", admin.site.urls),
+#     path("finance/", include("finance.urls")),
+# ]
 
