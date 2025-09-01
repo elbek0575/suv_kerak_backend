@@ -1,10 +1,148 @@
-from django.db import models
+from django.db import models, transaction
 from django.core.exceptions import ValidationError
+from accounts.models import Business  # тенант
 
 class CashBoss(models.Model):
-    id = models.BigAutoField(primary_key=True)      # bigserial
-    sana = models.DateField()                       # date
-    vaqt = models.TimeField()                       # time
+    business = models.ForeignKey(Business, on_delete=models.PROTECT, null=True, blank=True)
+    sana = models.DateField()
+    vaqt = models.TimeField()
+
+    boss_id = models.BigIntegerField()
+    boss_name = models.CharField(max_length=55)
+
+    client_tg_id = models.BigIntegerField(blank=True, null=True)
+    client_tel_num = models.CharField(max_length=15, blank=True, null=True)
+
+    buyurtma_num = models.BigIntegerField(blank=True, null=True)
+    kuryer_id = models.BigIntegerField()
+    kuryer_name = models.CharField(max_length=55)
+
+    income = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    expense = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    OPERATION = (("income", "Income"), ("expense", "Expense"))
+    cash_operation = models.CharField(max_length=10, choices=OPERATION)
+
+    cash_message = models.CharField(max_length=255, blank=True)
+    grated = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "cash_boss"
+        indexes = [
+            models.Index(fields=["business", "boss_id"]),
+            models.Index(fields=["business", "kuryer_id"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.cash_operation == "income":
+            self.cash_message = f"Курер {self.kuryer_name} дан кирим булди"
+        else:
+            self.cash_message = "Нақд пул топширилди"
+        super().save(*args, **kwargs)
+
+
+class CashState(models.Model):
+    """Босс тасдиғидан олдинги холатлар."""
+    business = models.ForeignKey(Business, on_delete=models.PROTECT)
+    sana = models.DateField()
+    vaqt = models.TimeField()
+
+    boss_id = models.BigIntegerField()
+    boss_name = models.CharField(max_length=55)
+
+    kuryer_id = models.BigIntegerField()
+    kuryer_name = models.CharField(max_length=55)
+
+    income = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    expense = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    balance = models.DecimalField(max_digits=14, decimal_places=2, default=0, help_text="Тасдиқ пайтида ҳисобланади")
+
+    OPERATION = (("income", "Income"), ("expense", "Expense"))
+    cash_operation = models.CharField(max_length=10, choices=OPERATION)
+
+    STATUS = (("pending", "Pending"), ("approved", "Approved"), ("rejected", "Rejected"))
+    status = models.CharField(max_length=10, choices=STATUS, default="pending")
+
+    tasdiq_vaqti = models.DateTimeField(blank=True, null=True)
+    rad_vaqti = models.DateTimeField(blank=True, null=True)
+
+    # тасдиқланганда яратилган CashBoss ёзувига сслка
+    cash_boss = models.OneToOneField(CashBoss, on_delete=models.SET_NULL, null=True, blank=True, related_name="source_state")
+
+    grated = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "cash_state"
+        indexes = [
+            models.Index(fields=["business", "boss_id", "status"]),
+            models.Index(fields=["business", "kuryer_id", "status"]),
+        ]
+
+    def clean(self):
+        if self.cash_operation == "income":
+            if self.income <= 0 or self.expense != 0:
+                raise ValidationError("Income учун income>0 ва expense=0 бўлиши керак.")
+        if self.cash_operation == "expense":
+            if self.expense <= 0 or self.income != 0:
+                raise ValidationError("Expense учун expense>0 ва income=0 бўлиши керак.")
+
+    @transaction.atomic
+    def approve(self, now_dt):
+        """Босс тасдиқлаганда CashBoss’га ўтказиш ва балансни янгилаш."""
+        if self.status != "pending":
+            return self.cash_boss  # олдин ишланган
+
+        # олдинги баланс
+        last = (
+            CashBoss.objects
+            .filter(business=self.business, boss_id=self.boss_id)
+            .order_by("-grated")
+            .first()
+        )
+        prev_balance = last.balance if last else 0
+
+        new_balance = prev_balance + (self.income or 0) - (self.expense or 0)
+
+        boss = CashBoss.objects.create(
+            business=self.business,
+            sana=self.sana,
+            vaqt=self.vaqt,
+            boss_id=self.boss_id,
+            boss_name=self.boss_name,
+            kuryer_id=self.kuryer_id,
+            kuryer_name=self.kuryer_name,
+            income=self.income,
+            expense=self.expense,
+            balance=new_balance,
+            cash_operation=self.cash_operation,
+        )
+
+        self.cash_boss = boss
+        self.balance = new_balance
+        self.status = "approved"
+        self.tasdiq_vaqti = now_dt
+        self.save(update_fields=["cash_boss", "balance", "status", "tasdiq_vaqti"])
+        return boss
+
+    def reject(self, now_dt):
+        """Босс рад этса — CashBoss’га ўтказилмайди."""
+        if self.status == "pending":
+            self.status = "rejected"
+            self.rad_vaqti = now_dt
+            self.save(update_fields=["status", "rad_vaqti"])
+
+
+
+class CashKuryer(models.Model):
+    """
+    Курьер кассаси жадвали.
+    Клиентдан нақд сотувлар → КИРИМ.
+    Боссга пул топшириш → ЧИҚИМ (аввал CashState’га, тасдиқдан сўнг CashBoss’га кўчади).
+    """
+    id = models.BigAutoField(primary_key=True)   # bigserial
+    sana = models.DateField()                   # сана
+    vaqt = models.TimeField()                   # вақт
 
     boss_id = models.BigIntegerField()
     boss_name = models.CharField(max_length=55)
@@ -12,39 +150,48 @@ class CashBoss(models.Model):
     client_tg_id = models.BigIntegerField()
     client_tel_num = models.CharField(max_length=15)
 
-    buyurtma_num = models.BigIntegerField()
+    buyurtma_num = models.BigIntegerField()     # буюртма рақами (лог учун)
     kuryer_id = models.BigIntegerField()
     kuryer_name = models.CharField(max_length=55)
 
-    income = models.DecimalField(max_digits=14, decimal_places=2, default=0)   # кирим
-    expense = models.DecimalField(max_digits=14, decimal_places=2, default=0)  # чиқим
-    balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)  # қолдиқ
+    # 💰 Суммалар
+    income  = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    expense = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    balance = models.DecimalField(max_digits=14, decimal_places=2, default=0)
 
+    # 🔁 Операция тури
     OPERATION_CHOICES = [
         ("income", "Income"),
         ("expense", "Expense"),
     ]
     cash_operation = models.CharField(max_length=10, choices=OPERATION_CHOICES)
 
-    # 🟢 Автоматик изоҳ (лог) — операцияга қараб тўлади
-    cash_message = models.CharField(max_length=255, blank=True)
+    # 📊 Ҳолат
+    STATUS_CHOICES = [
+        ("buffer", "Buffer"),          # курьер киритган, тасдиқланмаган
+        ("approved", "Tasdiqlandi"),   # босс тасдиқлаган
+        ("rejected", "Rad etildi"),    # рад этилган
+    ]
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="buffer")
 
     grated = models.DateTimeField(auto_now_add=True)  # timestamp
 
     class Meta:
-        db_table = "cash_boss"
-        verbose_name = "Boss Kassa"
-        verbose_name_plural = "Boss Kassalari"
+        db_table = "cash_kuryer"
+        verbose_name = "Kuryer Kassa"
+        verbose_name_plural = "Kuryer Kassalari"
         indexes = [
-            models.Index(fields=["boss_id"], name="idx_cashboss_boss"),
-            models.Index(fields=["client_tel_num"], name="idx_cashboss_client_tel"),
-            models.Index(fields=["kuryer_id"], name="idx_cashboss_kuryer"),
+            models.Index(fields=["boss_id"], name="idx_ck_boss"),
+            models.Index(fields=["kuryer_id"], name="idx_ck_kuryer"),
+            models.Index(fields=["client_tel_num"], name="idx_ck_client_tel"),
+            models.Index(fields=["buyurtma_num"], name="idx_ck_buyurtma"),
+            models.Index(fields=["status"], name="idx_ck_status"),
         ]
 
     def __str__(self):
-        return f"{self.sana} {self.vaqt} - Boss: {self.boss_name} | Balance: {self.balance}"
+        return f"{self.sana} {self.vaqt} | Kuryer: {self.kuryer_name} | Balance: {self.balance}"
 
-    # ✅ Валидация: income/expense мувофиқлиги
+    # ✅ Валидация: 'income' / 'expense' текшириш
     def clean(self):
         super().clean()
         if self.cash_operation == "income":
@@ -52,16 +199,127 @@ class CashBoss(models.Model):
                 raise ValidationError("Income операциясида 'income' > 0 бўлиши керак.")
             if self.expense > 0:
                 raise ValidationError("Income операциясида 'expense' 0 бўлиши керак.")
-        if self.cash_operation == "expense":
+        elif self.cash_operation == "expense":
             if self.expense <= 0:
                 raise ValidationError("Expense операциясида 'expense' > 0 бўлиши керак.")
             if self.income > 0:
                 raise ValidationError("Expense операциясида 'income' 0 бўлиши керак.")
+            
+class CourierWaterBottleBalance(models.Model):
+    """
+    Курьер тўла сув (19L бак) ҳаракатлари ва қолдиқлари журнали.
+    - in_from_boss: Боссдан олинди → water_balance++, bottle_balance++
+    - sell_to_client: Мижозга сотилди → water_balance--, bottle_balance--
+    - return_empty: Мижоз бўш тарa қайтaрди → баланс ўзгармайди (лойиҳа сиёсатига кўра)
+    - adjustment: Қўлда тузатиш
+    """
+    id = models.BigAutoField(primary_key=True)
+    business = models.ForeignKey(Business, on_delete=models.PROTECT)
 
-    # ✅ Автоматик хабар тайёрлаш
+    sana = models.DateField()
+    vaqt = models.TimeField()
+
+    boss_id = models.BigIntegerField()
+    boss_name = models.CharField(max_length=55)
+
+    client_tg_id = models.BigIntegerField(blank=True, null=True)
+    client_tel_num = models.CharField(max_length=15, blank=True, null=True)
+
+    buyurtma_num = models.BigIntegerField(blank=True, null=True)
+
+    kuryer_id = models.BigIntegerField()
+    kuryer_name = models.CharField(max_length=55)
+
+    # 🔢 Ҳаракат миқдори (дона). Пул эмас!
+    income = models.PositiveIntegerField(default=0)   # кирим (дона)
+    expense = models.PositiveIntegerField(default=0)  # чиқим (дона)
+
+    # 🔁 Операция тури
+    OPERATION = (
+        ("in_from_boss", "In from Boss"),
+        ("sell_to_client", "Sell to Client"),
+        ("return_empty", "Return Empty"),
+        ("adjustment", "Adjustment"),
+    )
+    operation = models.CharField(max_length=20, choices=OPERATION)
+
+    # 📊 Қолдиқлар (дона).
+    # water_balance: курьер қўлидаги тўла сув баклар сони
+    # bottle_balance: тўла бак “тарa” ҳисобининг қолдиғи (лойиҳа сиёсатига кўра бўш қайтганда ўзгармайди)
+    water_balance = models.PositiveIntegerField(default=0)
+    bottle_balance = models.PositiveIntegerField(default=0)
+
+    STATUS = (("ok", "OK"), ("draft", "Draft"), ("void", "Void"))
+    status = models.CharField(max_length=10, choices=STATUS, default="ok")
+
+    grated = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "kuryer_water_bottle_balance"
+        verbose_name = "Kuryer Water/Bottle Balance"
+        verbose_name_plural = "Kuryer Water/Bottle Balances"
+        indexes = [
+            models.Index(fields=["business", "kuryer_id", "sana", "vaqt"], name="idx_kwbb_kur_dt"),
+            models.Index(fields=["business", "boss_id"], name="idx_kwbb_boss"),
+            models.Index(fields=["business", "operation"], name="idx_kwbb_op"),
+        ]
+
+    def __str__(self):
+        return f"{self.sana} {self.vaqt} | {self.kuryer_name} | W:{self.water_balance} B:{self.bottle_balance}"
+
+    # ✅ Текшириш: operation ↔ income/expense мослиги
+    def clean(self):
+        super().clean()
+        if self.operation == "in_from_boss":
+            if self.income <= 0 or self.expense != 0:
+                raise ValidationError("in_from_boss: income>0 ва expense=0 бўлиши керак.")
+        elif self.operation == "sell_to_client":
+            if self.expense <= 0 or self.income != 0:
+                raise ValidationError("sell_to_client: expense>0 ва income=0 бўлиши керак.")
+        elif self.operation == "return_empty":
+            # баланс ўзгармайди, шунинг учун ҳар иккаласи ҳам 0 бўлиши керак
+            if self.income != 0 or self.expense != 0:
+                raise ValidationError("return_empty: income=0 ва expense=0 бўлиши керак.")
+        elif self.operation == "adjustment":
+            # adjustment’да ҳар иккаласи ҳам 0 бўлмасин (кичик тузатишга руҳсат)
+            if self.income == 0 and self.expense == 0:
+                raise ValidationError("adjustment: income ёки expense дан камида бири > 0 бўлиши керак.")
+
+    @transaction.atomic
     def save(self, *args, **kwargs):
-        if self.cash_operation == "income":
-            self.cash_message = f"Курер {self.kuryer_name} дан кирим булди"
-        elif self.cash_operation == "expense":
-            self.cash_message = "Нақд пул топширилди"
+        """
+        Автоматик қолдиқ ҳисоблаш:
+        - in_from_boss:  +income
+        - sell_to_client: -expense
+        - return_empty:   0 (баланс ўзгармайди)
+        - adjustment:     +income -expense
+        """
+        is_new = self._state.adding
+
+        if is_new:
+            # олдинги ҳолатни оламиз (шу курьер + бизнес бўйича)
+            last = (
+                CourierWaterBottleBalance.objects
+                .select_for_update()
+                .filter(business=self.business, kuryer_id=self.kuryer_id, status="ok")
+                .order_by("-grated")
+                .first()
+            )
+            prev_water = last.water_balance if last else 0
+            prev_bottle = last.bottle_balance if last else 0
+
+            delta = 0
+            if self.operation == "in_from_boss":
+                delta = self.income
+            elif self.operation == "sell_to_client":
+                delta = -self.expense
+            elif self.operation == "return_empty":
+                delta = 0
+            elif self.operation == "adjustment":
+                delta = self.income - self.expense
+
+            # Ҳар иккала баланс бир хил қадам билан ўзгаради
+            self.water_balance = max(0, prev_water + delta)
+            self.bottle_balance = max(0, prev_bottle + delta)
+
         super().save(*args, **kwargs)
