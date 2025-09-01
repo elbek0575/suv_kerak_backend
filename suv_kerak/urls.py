@@ -23,7 +23,8 @@ def root(request):
     return redirect("/admin/")
 
 urlpatterns = [
-    path("", root, name="root"),          # ← ру́тни админга йўналтирамиз
+    path("", root, name="root"),# ← ру́тни админга йўналтирамиз
+    path("i18n/", include("django.conf.urls.i18n")),
     path("admin/", admin.site.urls),
     path("finance/", include("finance.urls")),
 ]
