@@ -126,9 +126,10 @@ LANGUAGE_CODE = "ru"
 
 # (ихтиёрий) Келажакда тил алмаштиришни осонлаштириш учун рўйхат
 LANGUAGES = [
+    ("uz", "Ўзбек"),
     ("ru", "Русский"),
-    ("uz", "Oʻzbekcha"),
-    ("en", "English"),
+    ("uz_lat", "Oʻzbek"),
+    ("en", "English"),    
 ]
 
 
