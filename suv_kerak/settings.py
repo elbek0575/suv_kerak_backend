@@ -71,7 +71,7 @@ ROOT_URLCONF = 'suv_kerak.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        "DIRS": [BASE_DIR / "suv_kerak" / "templates"],   # lang.html шу ерда бўлсин
+        "DIRS": [BASE_DIR / "suv_kerak" / "templates"],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [

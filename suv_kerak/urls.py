@@ -17,17 +17,31 @@ Including another URLconf
 # suv_kerak/urls.py
 from django.contrib import admin
 from django.urls import path, include
-from django.shortcuts import redirect
+from django.shortcuts import render, redirect
 from django.conf import settings
 from django.utils import translation
 
 
+def lang_page(request):
+    return render(request, "lang.html")   # templates/lang.html
+
+# (ихтиёрий) тезкор GET-алмаштириш: /lang/uz ёки /lang/ru
+def switch_language(request, code):
+    next_url = request.META.get("HTTP_REFERER", "/admin/")
+    if code in dict(settings.LANGUAGES):
+        translation.activate(code)
+        resp = redirect(next_url)
+        resp.set_cookie(settings.LANGUAGE_COOKIE_NAME, code)
+        return resp
+    return redirect(next_url)
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("finance/", include("finance.urls")),
-    path("i18n/", include("django.conf.urls.i18n")),  # /i18n/setlang (POST)
+    path("i18n/", include("django.conf.urls.i18n")),  # POST /i18n/setlang/
+    path("lang/", lang_page, name="lang_page"),       # форма саҳифаси
+    path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz
 ]
-
 
 
 # def root(request):
