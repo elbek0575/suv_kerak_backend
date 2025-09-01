@@ -71,7 +71,7 @@ ROOT_URLCONF = 'suv_kerak.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        "DIRS": [BASE_DIR / "suv_kerak" / "templates"],   # lang.html шу ерда бўлсин
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -118,7 +118,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
+USE_I18N = True
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
@@ -131,7 +131,6 @@ LANGUAGES = [
     ("en", "English"),
 ]
 
-USE_I18N = True
 
 USE_TZ = True
 
