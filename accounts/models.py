@@ -32,32 +32,35 @@ class UserBoss(models.Model):
 
     # Бот токени ва гуруҳ ҳаволаси
     tg_token = models.TextField(unique=True)                 # text, уникал (токен ҳимоя қилинсин)
-    link_tg_group = models.URLField(max_length=255, blank=True, null=True, unique=True)  # ? → URL; ихтиёрий
+    link_tg_group = models.URLField(max_length=255, blank=True, null=True, unique=True)
 
     # Манзил қисмлари
     viloyat = models.TextField(blank=True, null=True)
     shahar = models.TextField(blank=True, null=True)
     tuman = models.TextField(blank=True, null=True)
 
-    # Парол/пин ҳақида: тавсия — ДЖАНГО User паролини ишлатиш; шу иккиси ихтиёрий қўйилди
-    password = models.CharField(max_length=128, blank=True, null=True)  # агар керак бўлса, бу ерга ҲЕЧ ҚАЧОН очиқ парол сақланмасин!
-    pin_code = models.CharField(max_length=8, blank=True, null=True)    # varchar(8)
+    # Парол/пин (ихтиёрий)
+    password = models.CharField(max_length=128, blank=True, null=True)
+    pin_code = models.CharField(max_length=8, blank=True, null=True)
 
-    # Промо-код (ихтиёрий)
-    promkod = models.TextField(blank=True, null=True)
+    # ✅ ЯНГИЛАНГАН: агент промо-коди (эски 'promkod' ўрнида)
+    agent_promkod = models.TextField(blank=True, null=True)
 
-    # Курьерлар рўйхати/маппинги (json)
-    # Масалан: {"active":[123456789, 987654321], "blocked":[111222333]}
-    kuryer_id = models.JSONField(default=dict)  # json{}
+    # Курьерлар рўйхати (json)
+    kuryer_id = models.JSONField(default=dict)
 
     # Яратилиш вақтини сақлаш
-    grated = models.DateTimeField(auto_now_add=True)  # timestamp
+    grated = models.DateTimeField(auto_now_add=True)
 
-    # (ихтиёрий) Агар Django User билан боғлашни истасангиз:
+    # ✅ ЯНГИ: агент исми ва интерфейс тили
+    agent_name = models.CharField(max_length=55, blank=True, null=True)
+    lang = models.TextField(blank=True, null=True)
+
+    # (ихтиёрий) Django User билан боғлаш
     user = models.OneToOneField(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="boss_profile")
 
     class Meta:
-        db_table = "user_boss"   # PostgreSQL'да default schema 'public', шунинг учун тўлиқ 'public.user_boss' шарт эмас
+        db_table = "user_boss"
         verbose_name = "Boss"
         verbose_name_plural = "Босс турдаги фойдаланувчилар"
         indexes = [
@@ -66,4 +69,3 @@ class UserBoss(models.Model):
 
     def __str__(self):
         return f"{self.boss_name} ({self.boss_id})"
-

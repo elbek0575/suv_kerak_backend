@@ -24,7 +24,6 @@ load_dotenv(BASE_DIR / ".env")
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-import os
 
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-key")
 
@@ -126,7 +125,7 @@ LANGUAGE_CODE = "ru"
 
 # (ихтиёрий) Келажакда тил алмаштиришни осонлаштириш учун рўйхат
 LANGUAGES = [
-    ("uz", "Ўзбек (Кирилл)"),
+    ("uz-Cyrl", "Ўзбек (Кирилл)"),
     ("ru", "Русский"),
     ("uz-Latn", "Oʻzbek (Lotin)"),
     ("en", "English"),    
