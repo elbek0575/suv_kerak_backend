@@ -1,7 +1,5 @@
 from django.db import models
 
-from django.db import models
-
 class Kuryer(models.Model):
     id = models.BigAutoField(primary_key=True)        # bigserial
     sana = models.DateField()                         # date
@@ -12,13 +10,13 @@ class Kuryer(models.Model):
     avto_marka = models.TextField(blank=True, null=True)  # авто марка
     tel_num = models.CharField(max_length=20, unique=True)  # телефон рақами
 
-    # 🟡 Янги сарик устун
-    bottle_balance = models.PositiveIntegerField(default=0)  # курьердаги сув баллонлари қолдиғи
-
     password = models.CharField(max_length=128, blank=True, null=True)  # парол (hashed бўлиши керак)
     pin_code = models.CharField(max_length=8, blank=True, null=True)    # пин код
 
     grated = models.DateTimeField(auto_now_add=True)  # timestamp
+
+    # 🟡 Янги сарик устун
+    lang = models.TextField(blank=True, null=True)    # тил (masalan: 'uz', 'ru', 'en')
 
     class Meta:
         db_table = "kuryer"   # PostgreSQL'да жадвал номи: public.kuryer
@@ -31,5 +29,3 @@ class Kuryer(models.Model):
 
     def __str__(self):
         return f"{self.kuryer_name} ({self.tel_num})"
-
-
