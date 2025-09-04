@@ -403,3 +403,61 @@ class BossSystemAccount(models.Model):
             self.note = self.note or "Акция/реклама — хақ олинмади"
 
         super().save(*args, **kwargs)
+
+
+
+class WaterPricePlan(models.Model):
+    business   = models.ForeignKey(Business, on_delete=models.PROTECT, related_name="price_plans")
+    name       = models.CharField(max_length=60, default="Асосий нарх")
+    period     = models.CharField(
+        max_length=8,
+        choices=(("month", "Ой"), ("year", "Йил")),
+        default="month"
+    )
+    currency   = models.CharField(max_length=8, default="UZS")
+    is_active  = models.BooleanField(default=True)
+    start_date = models.DateField(null=True, blank=True)   # акция бошланиши
+    end_date   = models.DateField(null=True, blank=True)   # акция тугаши
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "water_price_plan"
+        verbose_name = "Сув нарх режаси"
+        verbose_name_plural = "Сув нарх режалари"
+        indexes = [
+            models.Index(fields=["business", "is_active"]),
+            models.Index(fields=["business", "period"]),
+        ]
+
+    def __str__(self):
+        return f"{self.business} — {self.name}"
+
+
+class WaterPriceTier(models.Model):
+    plan       = models.ForeignKey(WaterPricePlan, on_delete=models.CASCADE, related_name="tiers")
+    min_qty    = models.PositiveIntegerField(default=0)
+    max_qty    = models.PositiveIntegerField(null=True, blank=True)  # None → ∞
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2)  # сўм
+    priority   = models.PositiveSmallIntegerField(default=100)
+    is_active  = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "water_price_tier"
+        verbose_name = "Сув нарх диапазони"
+        verbose_name_plural = "Сув нарх диапазонлари"
+        ordering = ["priority", "min_qty"]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(max_qty__isnull=True) | models.Q(max_qty__gte=models.F("min_qty")),
+                name="tier_min_lte_max",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["plan", "is_active"]),
+            models.Index(fields=["plan", "min_qty", "max_qty"]),
+        ]
+
+    def __str__(self):
+        hi = self.max_qty if self.max_qty is not None else "∞"
+        return f"{self.plan.name}: {self.min_qty}–{hi} дона → {self.unit_price} {self.plan.currency}"

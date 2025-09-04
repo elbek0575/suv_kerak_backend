@@ -1,7 +1,7 @@
 # finance/admin.py
 from django.contrib import admin
 from django.utils import timezone
-from .models import CashBoss, CashState, CourierWaterBottleBalance, BossSystemAccount, CashKuryer
+from .models import CashBoss, CashState, CourierWaterBottleBalance, BossSystemAccount, CashKuryer, WaterPricePlan, WaterPriceTier
 
 @admin.register(CashBoss)
 class CashBossAdmin(admin.ModelAdmin):
@@ -73,3 +73,14 @@ class CashKuryerAdmin(admin.ModelAdmin):
     list_filter = ("status", "cash_operation", "sana")
     search_fields = ("kuryer_name", "kuryer_id", "client_tel_num", "boss_name")
     readonly_fields = ("balance",)
+
+
+class WaterPriceTierInline(admin.TabularInline):
+    model = WaterPriceTier
+    extra = 1
+
+@admin.register(WaterPricePlan)
+class WaterPricePlanAdmin(admin.ModelAdmin):
+    list_display = ("id", "business", "name", "period", "is_active", "start_date", "end_date")
+    list_filter = ("business", "period", "is_active")
+    inlines = [WaterPriceTierInline]
