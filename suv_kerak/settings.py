@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     # 🔽 Қўшимча иловалар
     'accounts',
+    'agents',
     'couriers',
     'orders',
     'finance',
