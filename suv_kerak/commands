@@ -8,10 +8,10 @@ D:\Install\ngrok\ngrok.exe http 8000
 Remove-Item Env:HEROKU_API_KEY
 heroku login
 
-
 git add .
-git commit -m "Проект ёзишда давоми"
+git commit -m " янги агент апп қўшилди"
 git push heroku main
+
 
 git add .
 git branch -M main
@@ -22,11 +22,9 @@ heroku run python manage.py collectstatic -a ecohisob-backend
 python manage.py runserver
 
 Миграция килиш
-python manage.py makemigrations accounts
+python manage.py makemigrations
 python manage.py migrate
 
-
-python bot/tg_bot.py
 
 
 pip freeze > requirements.txt
@@ -36,3 +34,17 @@ Remove-Item Env:HEROKU_API_KEY
 heroku login
 heroku repo:purge_cache -a ecohisob-backend
 git push heroku main
+
+
+
+
+
+⚡ Хулоса:
+
+list_display = қайси устунлар руйхатда чиқиши.
+
+search_fields = қайси устунларда қидириш.
+
+list_filter = қайси устунлар бўйича фильтр.
+
+readonly_fields = формада кўрилади, лекин таҳрирланмайди.

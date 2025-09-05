@@ -43,14 +43,3 @@ urlpatterns = [
     path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz
 ]
 
-
-# def root(request):
-#     return redirect("/admin/")
-
-# urlpatterns = [
-#     path("", root, name="root"),# ← ру́тни админга йўналтирамиз
-#     path("i18n/", include("django.conf.urls.i18n")),
-#     path("admin/", admin.site.urls),
-#     path("finance/", include("finance.urls")),
-# ]
-
