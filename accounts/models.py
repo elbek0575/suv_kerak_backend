@@ -8,46 +8,47 @@ from django.contrib.auth import get_user_model
 class Business(models.Model):
     name = models.CharField(max_length=120, unique=True)
 
-    # 🟡 Скриндаги янги устунлар
-    sana          = models.DateField(null=True, blank=True)  # date
-    tg_token      = models.BigIntegerField(unique=True, null=True, blank=True)
-    link_tg_group = models.BigIntegerField(unique=True, null=True, blank=True)
+    sana          = models.DateField(null=True, blank=True)
+    tg_token      = models.TextField(unique=True, null=True, blank=True)             # 🔁 матн (token)
+    link_tg_group = models.URLField(max_length=255, unique=True, null=True, blank=True)
 
     viloyat = models.TextField(null=True, blank=True)
     shaxar  = models.TextField(null=True, blank=True)
     tuman   = models.TextField(null=True, blank=True)
 
-    grated = models.DateTimeField(auto_now_add=True)  # time_stamp
+    grated = models.DateTimeField(auto_now_add=True)
 
     agent_name    = models.CharField(max_length=55, null=True, blank=True)
     agent_promkod = models.TextField(null=True, blank=True)
 
-    # Сув нархлари (фаол диапазонлар) — JSONB
-    # [{"min":0,"max":100,"price":10000,"currency":"UZS"}, ...]
+    # 🧾 Сув нархлари JSON (диапазонлар)
     service_price_rules = models.JSONField(default=list, blank=True)
 
-    # Диапазонлар қўлланадиган давр: month/year
     DIAP_DAVR = (("month", "month"), ("year", "year"))
     narxlar_diap_davri = models.CharField(max_length=8, choices=DIAP_DAVR, default="month")
 
-    # “?” устунлар — ҳисоблагичлар (ҳамёнбоп тип: PositiveInteger)
+    # 📈 ҳисоблагичлар
     yil_bosh_sotil_suv_soni = models.PositiveIntegerField(default=0)
-    oy_bosh_sotil_suv_soni  = models.PositiveIntegerField(default=0)  
-     
+    oy_bosh_sotil_suv_soni  = models.PositiveIntegerField(default=0)
+
+    # 🟡 Сариқ устунлар (ихтиёрий, хавфсизлик учун plain пароль сақламаслик керак)
+    password = models.CharField(max_length=128, null=True, blank=True)  # ҳеч қачон очиқ парол сақламанг!
+    pin_code = models.CharField(max_length=8,   null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         db_table = "accounts_business"
-        verbose_name_plural = "Бизнесс эгаси турдаги фойдаланувчилар"
+        verbose_name_plural = "Бизнеслар"
         indexes = [
             models.Index(fields=["narxlar_diap_davri"], name="idx_business_diap_davr"),
+            models.Index(fields=["tg_token"], name="idx_business_tg_token"),
         ]
 
-    def __str__(self): 
+    def __str__(self):
         return self.name
 
-    # Ихтиёрий: JSON валидацияси (қисқа)
+    # JSON ни қисқа валидация қилиш
     def clean(self):
         rules = self.service_price_rules or []
         segs = []
@@ -79,38 +80,35 @@ class User(AbstractUser):
 
 User = get_user_model()
 
-class UserBoss(models.Model):
+class UserMenedjer(models.Model):
     """
-    public.user_boss жадвалига мос келади.
-    Эслатма: биометрик 'bio_data' базага сақланмайди (махфийлик/қонун талаблари).
+    public.user_menedjer жадвали.
     """
-    id = models.BigAutoField(primary_key=True)  # bigserial
-    sana = models.DateField()                   # date
+    id   = models.BigAutoField(primary_key=True)          # bigserial
+    sana = models.DateField()                             # date
 
-    # Telegram идентификатор (масалан, BOSS Telegram ID)
-    boss_id = models.BigIntegerField(unique=True)         # int8, уникал
-    boss_name = models.CharField(max_length=55)           # varchar(55)
+    # 👇 қайта номланган устунлар
+    menedjer_id   = models.BigIntegerField(unique=True)   # int8, уникал (эски boss_id)
+    menedjer_name = models.CharField(max_length=55)       # varchar(55) (эски boss_name)
+
+    # (бўшлаб қўямиз — аввалги моделингизда бор эди; хоҳласангиз кейин олиб ташлаймиз)
     boss_tel_num = models.CharField(max_length=20, unique=True, blank=True, null=True)
 
-    # ✅ Ортиқча майдонлар олиб ташланди (улар Business'да сақланади):
-    # tg_token, link_tg_group, viloyat, shahar, tuman,
-    # agent_promkod, kuryer_id, agent_name
-
-    # Парол/пин (ихтиёрий)
-    password = models.CharField(max_length=128, blank=True, null=True)  # парол (hashed бўлиши керак)
-    pin_code = models.CharField(max_length=8,   blank=True, null=True)  # пин код
+    # Парол/ПИН (ихтиёрий)
+    password = models.CharField(max_length=128, blank=True, null=True)
+    pin_code = models.CharField(max_length=8,   blank=True, null=True)
 
     # Интерфейс тили
     lang = models.TextField(blank=True, null=True)
 
-    # Яратилиш вақтини сақлаш
-    grated = models.DateTimeField(auto_now_add=True)  # timestamp
+    # Яратилиш вақти
+    grated = models.DateTimeField(auto_now_add=True)
 
-    # 🔗 Бир бизнесга кўп босс
+    # 🔗 Бир бизнесга бир нечта менежер
     business = models.ForeignKey(
         "Business",
         on_delete=models.PROTECT,
-        related_name="boss_users",
+        related_name="menedjer_users",
         null=True, blank=True
     )
 
@@ -119,16 +117,16 @@ class UserBoss(models.Model):
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
         null=True, blank=True,
-        related_name="boss_profile"
+        related_name="menedjer_profile"
     )
 
     class Meta:
-        db_table = "user_boss"
-        verbose_name = "Boss"
-        verbose_name_plural = "Босс турдаги фойдаланувчилар"
+        db_table = "user_menedjer"            # ← жадвал номи
+        verbose_name = "Menedjer"
+        verbose_name_plural = "Menedjerlar"
         indexes = [
-            models.Index(fields=["boss_id"], name="idx_userboss_bossid"),
+            models.Index(fields=["menedjer_id"], name="idx_usermenedjer_menedjerid"),
         ]
 
     def __str__(self):
-        return f"{self.boss_name} ({self.boss_id})"
+        return f"{self.menedjer_name} ({self.menedjer_id})"

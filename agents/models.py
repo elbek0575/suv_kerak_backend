@@ -10,12 +10,18 @@ class AgentAccount(models.Model):
 
     # агент қайси бизнес(лар)га боғланганини сақлаш
     business_map = models.JSONField(default=list, blank=True)
-    business = models.ForeignKey(Business, on_delete=models.SET_NULL,
-                                 null=True, blank=True, related_name="agents")
+    business = models.ForeignKey(
+        Business, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="agents"
+    )
 
-    boss_name = models.CharField(max_length=55, blank=True, null=True)
+    business_name = models.CharField(max_length=55, blank=True, null=True)
     status = models.TextField(blank=True, null=True)     # active / blocked
     lang = models.TextField(blank=True, null=True)       # uz / ru / en
+
+    # 🟡 Сариқ устунлар
+    password = models.CharField(max_length=128, blank=True, null=True)  # hashed пароль, очиқ сақламаслик керак
+    pin_code = models.CharField(max_length=8, blank=True, null=True)
 
     grated = models.DateTimeField(auto_now_add=True)
 
@@ -30,4 +36,5 @@ class AgentAccount(models.Model):
 
     def __str__(self):
         return f"{self.agent_name} (#{self.agent_id})"
+
 

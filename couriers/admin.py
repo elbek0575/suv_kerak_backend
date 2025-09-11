@@ -1,3 +1,4 @@
+# couriers/admin.py
 from django.contrib import admin
 from .models import Kuryer
 
@@ -10,14 +11,14 @@ class KuryerAdmin(admin.ModelAdmin):
         "yil_bosh_sotil_suv_soni", "oy_bosh_sotil_suv_soni",
         "grated",
     )
-    search_fields = ("kuryer_name", "tel_num", "kuryer_id")
-    list_filter = ("sana", "avto_marka", "narxlar_diap_davri", "yil_bosh_sotil_suv_soni", "oy_bosh_sotil_suv_soni")
+    search_fields = ("kuryer_name", "tel_num", "=kuryer_id")
+    list_filter = ("sana", "avto_marka", "narxlar_diap_davri")
     readonly_fields = ()
 
-    # JSON қоидалар сонини қисқача кўрсатиш
     def rules_cnt(self, obj):
         try:
             return len(obj.service_price_rules or [])
         except Exception:
             return 0
     rules_cnt.short_description = "Тариф қоидалари"
+

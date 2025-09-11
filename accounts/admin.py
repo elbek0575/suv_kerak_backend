@@ -1,6 +1,6 @@
 # accounts/admin.py
 from django.contrib import admin
-from .models import UserBoss, Business
+from .models import UserMenedjer, Business
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
@@ -8,10 +8,10 @@ class BusinessAdmin(admin.ModelAdmin):
     search_fields = ("name",)
     list_filter   = ("narxlar_diap_davri",)
 
-@admin.register(UserBoss)
-class UserBossAdmin(admin.ModelAdmin):
+@admin.register(UserMenedjer)
+class UserMenedjerAdmin(admin.ModelAdmin):
     # ↓ Modelda mavjud ustunlar bilan ishlaymiz
-    list_display  = ("id", "boss_name", "boss_tel_num", "boss_id", "business", "grated")
-    search_fields = ("boss_name", "boss_tel_num", "boss_id")
+    list_display  = ("id", "sana", "menedjer_name", "menedjer_id", "grated")
+    search_fields = ("menedjer_name", "menedjer_id")
     list_filter   = ("business", "sana")
 

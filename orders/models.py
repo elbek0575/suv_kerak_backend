@@ -34,7 +34,7 @@ class Buyurtma(models.Model):
 
     # FK ва снапшотлар
     kuryer = models.ForeignKey(Kuryer, on_delete=models.SET_NULL, null=True, blank=True, related_name="buyurtmalar")
-    kuryer_ext_id = models.BigIntegerField(null=True, blank=True)       # ➜ Эски kuryer_id ўрнига
+    kuryer_ext_id = models.BigIntegerField(null=True, blank=True)       # ➜ Эски kuryer_id ўрнига тарихий
     kuryer_name = models.CharField(max_length=55, blank=True, null=True)
     kuryer_tel_num = models.CharField(max_length=15, blank=True, null=True)
 
