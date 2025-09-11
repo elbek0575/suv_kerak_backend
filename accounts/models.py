@@ -1,3 +1,4 @@
+    # accounts/models.py
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
@@ -130,3 +131,33 @@ class UserMenedjer(models.Model):
 
     def __str__(self):
         return f"{self.menedjer_name} ({self.menedjer_id})"
+    
+
+class GeoList(models.Model):
+    """
+    public.geo_list
+    """
+    viloyat = models.CharField(max_length=80, db_index=True)
+    shaxar_yoki_tuman_nomi = models.CharField(max_length=120, db_index=True)
+    SHAXAR_YOKI_TUMAN_CHOICES = (("шаҳар", "шаҳар"), ("туман", "туман"))
+    shaxar_yoki_tuman = models.CharField(max_length=10, choices=SHAXAR_YOKI_TUMAN_CHOICES, db_index=True)
+
+    class Meta:
+        db_table = "geo_list"  # public.geo_list
+        verbose_name = "Гео (шаҳар/туман)"
+        verbose_name_plural = "Гео (шаҳар/туман)"
+        indexes = [
+            models.Index(
+                fields=["viloyat", "shaxar_yoki_tuman", "shaxar_yoki_tuman_nomi"],
+                name="idx_geo_vil_tur_nomi",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["viloyat", "shaxar_yoki_tuman_nomi", "shaxar_yoki_tuman"],
+                name="uq_geo_viloyat_nomi_turi",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.viloyat} — {self.shaxar_yoki_tuman_nomi} ({self.shaxar_yoki_tuman})"

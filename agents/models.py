@@ -37,4 +37,3 @@ class AgentAccount(models.Model):
     def __str__(self):
         return f"{self.agent_name} (#{self.agent_id})"
 
-

@@ -20,6 +20,7 @@ from django.urls import path, include
 from django.shortcuts import render, redirect
 from django.conf import settings
 from django.utils import translation
+from accounts.views import telegram_webhook
 
 
 def lang_page(request):
@@ -40,6 +41,8 @@ urlpatterns = [
     path("finance/", include("finance.urls")),
     path("i18n/", include("django.conf.urls.i18n")),  # POST /i18n/setlang/
     path("lang/", lang_page, name="lang_page"),       # форма саҳифаси
-    path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz
+    path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz    
+    path("webhook/", telegram_webhook, name="telegram_webhook"),  # <-- /webhook/
+    path("accounts/", include("accounts.urls")),
 ]
 
