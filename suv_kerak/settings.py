@@ -44,7 +44,7 @@ DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 
 TIME_ZONE = os.environ.get("TZ", "Asia/Tashkent")
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", ".herokuapp.com", ".ngrok-free.app"]
+ALLOWED_HOSTS = ["127.0.0.1", "localhost", "https://suv-kerak-backend-eu-d9af752240af.herokuapp.com", ".ngrok-free.app"]
 
 AUTH_USER_MODEL = "accounts.User"
 
