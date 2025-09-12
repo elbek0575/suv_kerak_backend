@@ -5,32 +5,43 @@ from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 class Business(models.Model):
     name = models.CharField(max_length=120, unique=True)
 
-    sana          = models.DateField(null=True, blank=True)
+    sana          = models.DateField(default=timezone.localdate, editable=False)
     tg_token      = models.TextField(unique=True, null=True, blank=True)             # 🔁 матн (token)
     link_tg_group = models.URLField(max_length=255, unique=True, null=True, blank=True)
 
     viloyat = models.TextField(null=True, blank=True)
     shaxar  = models.TextField(null=True, blank=True)
     tuman   = models.TextField(null=True, blank=True)
-
-    grated = models.DateTimeField(auto_now_add=True)
+    boss_tel_num = models.CharField(
+        max_length=15, null=True, blank=True, db_column="boss_tel_num"
+    )    
 
     agent_name    = models.CharField(max_length=55, null=True, blank=True)
     agent_promkod = models.TextField(null=True, blank=True)
 
     # 🧾 Сув нархлари JSON (диапазонлар)
-    service_price_rules = models.JSONField(default=list, blank=True)
+    service_price_rules = models.JSONField(null=True, blank=True)
 
     DIAP_DAVR = (("month", "month"), ("year", "year"))
-    narxlar_diap_davri = models.CharField(max_length=8, choices=DIAP_DAVR, default="month")
+    narxlar_diap_davri = models.CharField(max_length=8, choices=DIAP_DAVR, null=True, blank=True)
+    
+     # 📌 Тил
+    LANG_CHOICES = (
+        ("uz", "Uzbek (Cyrillic)"),
+        ("uz_lat", "Uzbek (Latin)"),
+        ("ru", "Русский"),
+        ("en", "English"),
+    )
+    lang = models.CharField(max_length=10, choices=LANG_CHOICES, default="uz", db_index=True)
 
     # 📈 ҳисоблагичлар
-    yil_bosh_sotil_suv_soni = models.PositiveIntegerField(default=0)
-    oy_bosh_sotil_suv_soni  = models.PositiveIntegerField(default=0)
+    yil_bosh_sotil_suv_soni = models.PositiveIntegerField(null=True, blank=True)
+    oy_bosh_sotil_suv_soni  = models.PositiveIntegerField(null=True, blank=True)
 
     # 🟡 Сариқ устунлар (ихтиёрий, хавфсизлик учун plain пароль сақламаслик керак)
     password = models.CharField(max_length=128, null=True, blank=True)  # ҳеч қачон очиқ парол сақламанг!

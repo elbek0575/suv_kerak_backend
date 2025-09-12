@@ -4,7 +4,7 @@ from .models import UserMenedjer, Business, GeoList
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
-    list_display  = ("id","name","narxlar_diap_davri","yil_bosh_sotil_suv_soni","oy_bosh_sotil_suv_soni","grated")
+    list_display  = ("id","name","narxlar_diap_davri","yil_bosh_sotil_suv_soni","oy_bosh_sotil_suv_soni","created_at")
     search_fields = ("name",)
     list_filter   = ("narxlar_diap_davri",)
 

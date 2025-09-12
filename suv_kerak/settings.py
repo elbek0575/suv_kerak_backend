@@ -15,6 +15,18 @@ import os
 from dotenv import load_dotenv
 import dj_database_url
 
+import os
+try:
+    from dotenv import load_dotenv  # pip install python-dotenv
+    load_dotenv()
+except Exception:
+    pass
+from django.db import models
+from django.utils import timezone
+
+TELEGRAM_BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+BACKEND_BASE_URL = os.getenv("WEBHOOK_HOST", "")
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 # .env ни локалда юклаймиз (Heroku’да бу файл йўқ)
