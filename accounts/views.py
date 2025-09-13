@@ -152,9 +152,70 @@ def unknown_command_text(lang: str) -> str:
     }
     return texts.get(lang, texts["uz"])
 
-
+# Вебхук суровига жавоб берувчи функция
 @csrf_exempt
 def telegram_webhook(request):
+    """
+    Telegram webhook view for the “SUV KERAK” bot.
+
+    Қисқача
+    -------
+    Telegram’dan келган update’ларни (POST /webhook/) қабул қилади, chat_id ва матнни ажратади,
+    фойдаланувчининг тилини accounts_business.lang дан олади ва буйруққа қараб жавоб юборади.
+
+    Қўллаб-қувватланадиган буйруқлар
+    --------------------------------
+    • /start
+        Фойдаланувчига умумий маълумот/йўриқнома хабарини юборади (unknown_command_text(lang)).
+        (Эслатма: логикангизда start_text() ўрнига unknown_command_text() юборилади.)
+
+    • /reg <FISH>; <Viloyat>; <Shahar/Tuman>; <Telefon>; [Promkod]; [Til]
+        Агар фойдаланувчи олдин рўйхатдан ўтган бўлса — already_registered_text(lang, chat_id, phone) юборилади.
+        Акс ҳолда бекендга {BACKEND_BASE_URL}/accounts/boss/register/ га JSON payload юборилади ва
+        қайтган ID/парол фойдаланувчига етказилади.
+
+        Мисоллар:
+          /reg Аюбов Элбек; Қашқадарё вилояти; Косон; +998991112233; uz
+          /reg Аюбов Элбек; Қашқадарё вилояти; Косон; +998991112233; ABC123; uz_lat
+
+        Изоҳ:
+          parse_lang_and_promkod(raw_parts) ёрдамчи функцияси массив охиридан тил ва промкодни ажратиб қайтаради.
+          Тил келмаса, базадаги lang ёки "uz" қўлланади.
+
+    • Бошқа матнлар
+        unknown_command_text(lang) юборилади.
+
+    Кирувчи маълумот (Telegram Update JSON)
+    ---------------------------------------
+    {
+      "message": {
+        "chat": {"id": <int>},
+        "text": "<str>"
+      }
+    }
+
+    Четдан боғлиқликлар
+    -------------------
+    • settings.TELEGRAM_BOT_TOKEN — Telegram’га sendMessage юбориш учун
+    • settings.BACKEND_BASE_URL   — бекенд API’сига /accounts/boss/register/ POST қилиш учун
+
+    Қайтариладиган жавоб
+    --------------------
+    JsonResponse({"ok": True}) — муваффақиятли ишловдан сўнг 200 статус билан.
+    (Webhook талабига кўра Telegram 2xx кутади; кодингизда хатолик қолса ҳам 200 қайтариш тавсия этилади.)
+
+    Параметрлар
+    -----------
+    request : django.http.HttpRequest
+        Telegram’dan келган POST сўров.
+
+    Қайдлар
+    -------
+    • Тил accounts_business(lang) дан chat_id бўйича аниқланади.
+    • send() ичида Telegram’га HTML parse_mode билан хабар юборилади.
+    """
+    # ... функция давоми ...
+
     data = json.loads(request.body.decode("utf-8") or "{}")
     msg  = data.get("message") or {}
     chat = msg.get("chat") or {}
@@ -191,8 +252,17 @@ def telegram_webhook(request):
 
         if row:
             phone = row[0]
-            send(already_registered_text(lang, chat_id, phone))
-            return JsonResponse({"ok": True, "already": True})
+            msg = already_registered_text(lang, chat_id, phone)  # ✅ матнни оламиз
+            send(msg)
+            return JsonResponse({
+            "ok": True,
+            "already": True,
+            "id": chat_id,
+            "phone": phone,
+            "lang": lang,
+            "message": msg,              # ✅ Постманга ҳам шу матнни қайтаряпмиз
+            # "telegram": {"sent": ok, "meta": meta}  # (ихтиёрий) агар send() натижасини қайтармоқчи бўлсангиз
+        }) 
 
         # 1) тил ва промкодни парс қилиш
         raw_parts = [p.strip() for p in text[5:].split(";")]
@@ -238,6 +308,20 @@ def telegram_webhook(request):
 WEEKDAY_UZ_ABBR = ["du", "se", "ch", "pa", "ju", "sh", "ya"]
 
 def _normalize_phone(raw: str) -> str:
+    """
+    Телефон рақамини нормализация қилади.
+
+    Нима қилади:
+      - Матндан рақамлар ва '+' ни сақлаб қолади.
+      - Агар рақам '998' билан бошланса ва бошида '+' бўлмаса → '+998…'га айлантиради.
+
+    Параметрлар:
+      raw (str): Фойдаланувчи киритган телефон (эркин форматда).
+
+    Қайтарилади:
+      str: Нормаллашган телефон (масалан, '+998991234567'); хато/бўш бўлса — бўш сатри.
+    """
+    
     if not raw: return ""
     s = re.sub(r"[^\d+]", "", str(raw))
     if not s: return ""
@@ -246,10 +330,48 @@ def _normalize_phone(raw: str) -> str:
     return s
 
 def _make_password(user_id: int) -> str:
+    """
+    Вақтинчалик парол яратади (қисқа, инсон ўқийдиган формат).
+
+    Формула:
+      <IDнинг илк 2 рақами><кун DD><ҳафта куни қисқартмаси>
+
+    Масалан:
+      user_id=74213, сана 12-кун, жумa ('Ju') → '7412Ju'
+
+    Эслатма:
+      WEEKDAY_UZ_ABBR индекси 0–6 (душ–як) бўйича ишлайди.
+
+    Параметрлар:
+      user_id (int): Фойдаланувчи (Telegram) ID’и.
+
+    Қайтарилади:
+      str: Генерация қилинган вақтинчалик парол.
+    """
     now = datetime.now()
     return f"{str(user_id)[:2]}{now.day:02d}{WEEKDAY_UZ_ABBR[now.weekday()]}"
 
 def _send_tg_message(chat_id: int, text: str) -> tuple[bool, str]:
+    """
+    Telegram'га sendMessage юбориш (rate-limit’ни инобатга олган ҳолда).
+
+    Нима қилади:
+      - settings.TELEGRAM_BOT_TOKEN орқали /sendMessage қилади.
+      - 429 (Too Many Requests) бўлса, `retry_after` га қараб 1 марта кейинроқ қайта уринади.
+      - Истисно зарур ҳолларда истисно ташламайди — (False, сабаб) қайтаради.
+
+    Параметрлар:
+      chat_id (int): Қабул қилувчи чат ID’и.
+      text (str): Юбориладиган хабар (HTML parse_mode).
+
+    Қайтарилади:
+      tuple[bool, str]:
+        - 1-элемент: муваффақият (True/False)
+        - 2-элемент: Telegram жавоби матни ёки сабаб ('NO_TOKEN', 'REQUEST_ERROR: …', ва ҳ.к.)
+
+    Эслатма:
+      `disable_web_page_preview=True` — ҳавола превьюлари ўчирилган.
+    """
     token = getattr(settings, "TELEGRAM_BOT_TOKEN", "") or ""
     if not token:
         return False, "NO_TOKEN"
@@ -269,6 +391,46 @@ def _send_tg_message(chat_id: int, text: str) -> tuple[bool, str]:
 
 @csrf_exempt
 def register_boss(request: HttpRequest, payload: str = ""):
+    """
+    BOSS (бизнес эгаси) фойдаланувчисини рўйхатдан ўтказиш ва унга Telegram хабарини юбориш.
+
+    Кириш форматлари:
+      1) payload (ботдан келadigan қисқа формат):
+         "tg_id/full_name/viloyat/nomi/phone[/promkod]"
+      2) JSON/POST (frontend ёки ботдан JSON):
+         {
+           "tg_id": int,
+           "full_name": str,
+           "viloyat": str,
+           "shahar_yoki_tuman": str,
+           "phone": str,
+           "promkod": str | null,      # ихтиёрий
+           "lang": "uz|uz_lat|ru|en"   # ихтиёрий, дефолт 'uz'
+         }
+
+    Асосий қадамлар:
+      • Тилни (lang) текшириш: {'uz','uz_lat','ru','en'}; нотўғри бўлса — 'uz'.
+      • Дубликат ID бор-йўқлигини текшириш (accounts_business.id).
+      • geo_list бўйича 'nomi' шаҳarmi/туманми аниқлаш.
+      • Промкод келса — agent_account’дан агентни топиш.
+      • accounts_business’га UPSERT:
+          - (id, name, viloyat, shaxar, tuman, boss_tel_num, agent_name, agent_promkod, lang)
+          - агар lang устуни йўқ бўлса, динамик тарзда қўшилади (+ индекс).
+      • Паролни `_make_password()` орқали янгилаш.
+      • Агар промкод бўлса — agent_account.business_id JSONBга бириктириш.
+      • Сўнг фойдаланувчига Telegram орқали 4 тилдан бирида тайёр матн юбориш.
+
+    Қайтарилади:
+      200 OK, JSON:
+        - {"ok": True, "id": <int>, "password": <str>, "tg_sent": <bool>}
+        - Агар аввалдан мавжуд бўлса: {"ok": True, "already": True, "id": tg_id}
+      4xx — валидация/маълумот топилмади (масалан, geo_list).
+      500 — ички хатолик (истисно ушланиб, detail қайтарилади).
+
+    Изоҳ:
+      • Телефон `_normalize_phone()` билан тозаланади.
+      • Хабар матни HTML parse_mode’да юборилади.
+    """
     try:
         # --- lang ни оламиз (дефолт: uz)
         if payload:
