@@ -1049,7 +1049,7 @@ def boss_login(request):
 
     # Кирувчи валидация
     if raw_id is None or not raw_pw:
-        audit_log("login_fail", request, actor_id=None, status=400,
+        audit_log("Кириш муваффақиятсиз", request, actor_id=None, status=400,
                   meta={"reason": "bad_input"})
         return JsonResponse({"detail": "ID ва парол талаб қилинади."},
                             status=400, json_dumps_params={"ensure_ascii": False})
@@ -1057,7 +1057,7 @@ def boss_login(request):
     try:
         chat_id = int(str(raw_id).strip())
     except Exception:
-        audit_log("login_fail", request, actor_id=None, status=400,
+        audit_log("Кириш муваффақиятсиз", request, actor_id=None, status=400,
                   meta={"reason": "bad_id_format", "raw_id": raw_id})
         return JsonResponse({"detail": "ID нотўғри форматда."},
                             status=400, json_dumps_params={"ensure_ascii": False})
@@ -1073,7 +1073,7 @@ def boss_login(request):
 
     if not row:
         # user enumeration’ни олдини олиш учун 401
-        audit_log("login_fail", request, actor_id=chat_id, status=401,
+        audit_log("Кириш муваффақиятсиз", request, actor_id=chat_id, status=401,
                   meta={"reason": "user_not_found"})
         return JsonResponse({"detail": "ID ёки парол нотўғри."},
                             status=401, json_dumps_params={"ensure_ascii": False})
@@ -1082,7 +1082,7 @@ def boss_login(request):
 
     # 3) Паролни текшириш
     if not (hashed and check_password(raw_pw, hashed)):
-        audit_log("login_fail", request, actor_id=chat_id, status=401,
+        audit_log("Кириш муваффақиятсиз", request, actor_id=chat_id, status=401,
                   meta={"reason": "bad_password"})
         return JsonResponse({"detail": "ID ёки парол нотўғри."},
                             status=401, json_dumps_params={"ensure_ascii": False})
@@ -1105,7 +1105,7 @@ def boss_login(request):
         """, [now, chat_id, now, chat_id])
 
     # 5) Муваффақият — аудит
-    audit_log("login_success", request, actor_id=chat_id, status=200)
+    audit_log("Кириш муваффақиятли", request, actor_id=chat_id, status=200)
 
     return JsonResponse(
         {

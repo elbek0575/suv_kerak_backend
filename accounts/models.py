@@ -189,7 +189,7 @@ class GeoList(models.Model):
 
 METHOD_CHOICES = [("GET","GET"), ("POST","POST"), ("PUT","PUT"), ("PATCH","PATCH"), ("DELETE","DELETE")]
 ACTION_CHOICES = [
-    ("Кириш муваффақиятли",  "Кириш муваффақиятли"),
+    ("login_success",  "Кириш муваффақиятли"),
     ("login_fail",     "Кириш муваффақиятсиз"),
     ("reg_ok",         "Рўйхатдан ўтди"),
     ("reg_already",    "Аллақачон рўйхатдан ўтган"),
