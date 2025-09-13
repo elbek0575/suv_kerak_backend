@@ -5,6 +5,39 @@ from django.conf import settings
 from django.db import connection               # ✅ Django connection
 from datetime import datetime
 import json, re, time, requests
+from django.contrib.auth.hashers import make_password, check_password
+from django.utils import timezone
+import secrets, string
+
+
+#Аудит назорат учун қайд логи
+def audit_log(action: str,
+              request,
+              *,
+              actor_id: int | None = None,
+              status: int | None = None,
+              object_type: str | None = None,
+              object_id: int | None = None,
+              meta: dict | None = None):
+    try:
+        ip = request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip() or request.META.get("REMOTE_ADDR")
+        ua = request.META.get("HTTP_USER_AGENT")
+        path = request.path
+        method = request.method
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO public.audit_log
+                    (ts, actor_id, action, path, method, status, ip, user_agent, object_type, object_id, meta)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                """,
+                [timezone.now(), actor_id, action, path, method, status, ip, ua, object_type, object_id,
+                 json.dumps(meta or {})]
+            )
+    except Exception:
+        # лог ёзишдан хатолик сервисни тўхтатмасин
+        pass
+
 
 # helpers (Ёрдамчи функциялар)
 LANG_MAP = {
@@ -13,36 +46,6 @@ LANG_MAP = {
     "en": "en",
     "uz_lat": "uz_lat",  # ўзбек (лотин)    
 }
-
-def start_text(lang: str) -> str:
-    texts = {
-        "uz": (
-            "Рўйхатдан ўтиш учун қуйидаги форматда юборинг:\n"
-            "/reg ФИШ; Вилоят; Шаҳар ёки туман; Телефон; [Промкод]; [Тил]\n\n"
-            "Тил вариантлари: uz | ru | en | uz_lat\n"
-            "Масалан:\n/reg Камол Камолов; Қашқадарё вилояти; Косон; +998901234567; AGT-001; uz"
-        ),
-        "ru": (
-            "Чтобы зарегистрироваться, отправьте в таком формате:\n"
-            "/reg ФИО; Область; Город/район; Телефон; [Промокод]; [Язык]\n\n"
-            "Языки: uz | ru | en | uz_lat\n"
-            "Пример:\n/reg Камол Камолов; Кашкадарьинская область; Косон; +998901234567; AGT-001; ru"
-        ),
-        "en": (
-            "To register, send in this format:\n"
-            "/reg Full name; Region; City/District; Phone; [Promocode]; [Lang]\n\n"
-            "Languages: uz | ru | en | uz_lat\n"
-            "Example:\n/reg Kamol Kamolov; Qashqadaryo region; Koson; +998901234567; AGT-001; en"
-        ),
-        "uz_lat": (
-            "Ro'yxatdan o'tish uchun quyidagi formatda yuboring:\n"
-            "/reg FISH; Viloyat; Shahar yoki tuman; Telefon; [Promkod]; [Til]\n\n"
-            "Tilllar: uz | ru | en | uz_lat\n"
-            "Masalan:\n/reg Kamol Kamolov; Qashqadaryo viloyati; Koson; +998901234567; AGT-001; uz_lat"
-        ),
-    }
-    return texts.get(lang, texts["uz"])
-
 
 def already_registered_text(lang: str, chat_id: int, phone: str | None = None) -> str:
     phone_line = f"📞 <code>{phone}</code>\n" if phone else ""
@@ -274,7 +277,7 @@ def telegram_webhook(request):
         parts, lang_param, promkod = parse_lang_and_promkod(raw_parts)  # sizdagi ёрдамчи функция
         if len(parts) < 4:
             # етмасада, мавжуд/lang бўйича старт хабарини юбориб қўямиз
-            send(start_text(lang))
+            send(unknown_command_text(lang))
             return JsonResponse({"ok": True})
 
         payload = {
@@ -403,50 +406,51 @@ def _send_tg_message(chat_id: int, text: str) -> tuple[bool, str]:
 @csrf_exempt
 def register_boss(request: HttpRequest, payload: str = ""):
     """
-    BOSS (бизнес эгаси) фойдаланувчисини рўйхатдан ўтказиш ва унга Telegram хабарини юбориш.
+    BOSS (biznes egasi) foydalanuvchisini ro‘yxatdan o‘tkazish va unga Telegram xabarini yuborish.
 
-    Кириш форматлари:
-      1) payload (ботдан келadigan қисқа формат):
+    Kirish formatlari:
+      1) payload (botdan keladigan qisqa format):
          "tg_id/full_name/viloyat/nomi/phone[/promkod]"
-      2) JSON/POST (frontend ёки ботдан JSON):
+      2) JSON/POST (frontend yoki botdan JSON):
          {
            "tg_id": int,
            "full_name": str,
            "viloyat": str,
            "shahar_yoki_tuman": str,
            "phone": str,
-           "promkod": str | null,      # ихтиёрий
-           "lang": "uz|uz_lat|ru|en"   # ихтиёрий, дефолт 'uz'
+           "promkod": str | null,      # ixtiyoriy
+           "lang": "uz|uz_lat|ru|en"   # ixtiyoriy, default 'uz'
          }
 
-    Асосий қадамлар:
-      • Тилни (lang) текшириш: {'uz','uz_lat','ru','en'}; нотўғри бўлса — 'uz'.
-      • Дубликат ID бор-йўқлигини текшириш (accounts_business.id).
-      • geo_list бўйича 'nomi' шаҳarmi/туманми аниқлаш.
-      • Промкод келса — agent_account’дан агентни топиш.
-      • accounts_business’га UPSERT:
-          - (id, name, viloyat, shaxar, tuman, boss_tel_num, agent_name, agent_promkod, lang)
-          - агар lang устуни йўқ бўлса, динамик тарзда қўшилади (+ индекс).
-      • Паролни `_make_password()` орқали янгилаш.
-      • Агар промкод бўлса — agent_account.business_id JSONBга бириктириш.
-      • Сўнг фойдаланувчига Telegram орқали 4 тилдан бирида тайёр матн юбориш.
+    Asosiy qadamlari:
+      • Tilni (lang) tekshirish: {'uz','uz_lat','ru','en'}; noto‘g‘ri bo‘lsa — 'uz'.
+      • Dublikat ID bor-yo‘qligini tekshirish (accounts_business.id).
+      • geo_list bo‘yicha 'nomi' shaharmi/tumanmi aniqlash.
+      • Promkod kelsa — agent_account dan agentni topish.
+      • accounts_business ga UPSERT:
+          (id, name, viloyat, shaxar, tuman, boss_tel_num, agent_name, agent_promkod, lang)
+      • Parolni `_make_password()` orqali yaratish va bazaga HASH (make_password) bilan saqlash.
+      • Promkod bo‘lsa — agent_account.business_id JSONB ga biriktirish.
+      • So‘ng foydalanuvchiga Telegram orqali tayyor matn yuborish.
 
-    Қайтарилади:
+    Qaytaradi:
       200 OK, JSON:
         - {"ok": True, "id": <int>, "password": <str>, "tg_sent": <bool>}
-        - Агар аввалдан мавжуд бўлса: {"ok": True, "already": True, "id": tg_id}
-      4xx — валидация/маълумот топилмади (масалан, geo_list).
-      500 — ички хатолик (истисно ушланиб, detail қайтарилади).
+        - Agar avvaldan mavjud bo‘lsa: {"ok": True, "already": True, "id": tg_id, ...}
 
-    Изоҳ:
-      • Телефон `_normalize_phone()` билан тозаланади.
-      • Хабар матни HTML parse_mode’да юборилади.
+    Eslatma:
+      • Telefon `_normalize_phone()` bilan tozalanadi.
+      • Xabar matni Telegram’da HTML parse_mode bilan yuboriladi.
+
+    Audit:
+      • Muvaffaqiyatli ro‘yxatdan o‘tganida:  audit_log("reg_ok", request, actor_id=new_id, status=200)
+      • Avvaldan ro‘yxatdan o‘tgan bo‘lsa:    audit_log("reg_already", request, actor_id=chat_id, status=200)
     """
     try:
         print("DBG:: ENTER register_boss, __file__=", __file__)
 
-        # 1) JSON body'ни хавфсиз парс қилиш
-        data = {}  # <-- аввал инициализация
+        # 1) JSON body’ni xavfsiz parse qilish
+        data = {}
         try:
             raw = request.body or b""
             if isinstance(raw, (bytes, bytearray)):
@@ -455,49 +459,50 @@ def register_boss(request: HttpRequest, payload: str = ""):
         except Exception as e:
             print("DBG:: JSON parse error:", e)
 
-        # 2) tg_id ни турли манбадан олиш
-        tg_id = (
+        # 2) tg_id ni turli manbadan olish
+        tg_id_in = (
             (data.get("tg_id") if isinstance(data, dict) else None)
             or request.GET.get("tg_id")
             or request.headers.get("X-Telegram-Id")
         )
         try:
-            chat_id = int(tg_id)
+            chat_id = int(tg_id_in)
         except Exception:
             return JsonResponse({"detail": "tg_id талаб қилинади."}, status=400)
 
-        # 3) payload ва тил
-        text = (data.get("payload") or "").strip()
-        lang = (text.split(";")[-1].strip() if ";" in text else "") or request.headers.get("Accept-Language", "uz")
+        # 3) payload va til
+        payload_text = (data.get("payload") or "").strip()
+        lang = (payload_text.split(";")[-1].strip() if ";" in payload_text else "") or request.headers.get("Accept-Language", "uz")
         if lang not in {"uz", "ru", "en", "uz_lat"}:
             lang = "uz"
 
-        # 4) аввалдан рўйхатдан ўтган-ўтмаганини текшириш
+        # 4) avvaldan ro‘yxatdan o‘tgan-yo‘qligini tekshirish
         with connection.cursor() as cur:
             cur.execute("SELECT boss_tel_num FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id])
             row = cur.fetchone()
 
         if row:
-            phone = row[0] or ""
-            msg = already_registered_text(lang, chat_id, phone)  # 🔹 тўлиқ хабар
-            print("DBG:: register_boss already; id=", chat_id)
+            phone_existing = row[0] or ""
+            msg = already_registered_text(lang, chat_id, phone_existing)
+            # ✅ AUDIT — already registered
+            audit_log("reg_already", request, actor_id=chat_id, status=200, meta={"phone": phone_existing})
 
             return JsonResponse(
                 {
                     "ok": True,
                     "already": True,
                     "id": chat_id,
-                    "phone": phone,
+                    "phone": phone_existing,
                     "lang": lang,
                     "message": msg,
-                    "probe": "register_boss_v5"
                 },
                 json_dumps_params={"ensure_ascii": False}
             )
 
-
-        # --- input парсинг
+        # --- input parsing (payload yoki JSON)
         tg_id = full_name = viloyat = nomi = phone = promkod = None
+        source = "payload" if payload else "json"
+
         if payload:
             parts = [p.strip() for p in payload.split("/") if p.strip()]
             if len(parts) < 5:
@@ -517,9 +522,9 @@ def register_boss(request: HttpRequest, payload: str = ""):
 
         phone_norm = _normalize_phone(phone)
 
-        # --- DB (UPSERT логикаси)
+        # --- DB (UPSERT logikasi)
         with connection.cursor() as cur:
-            # 0) Керак бўлса lang устунини яратиб қўямиз
+            # 0) kerak bo‘lsa lang ustunini yaratib qo‘yamiz
             cur.execute("""
                 DO $$
                 BEGIN
@@ -533,23 +538,23 @@ def register_boss(request: HttpRequest, payload: str = ""):
                 END $$;
             """)
 
-            # 1) geo_listдан турини аниқлаш
+            # 1) geo_list dan turini aniqlash
             cur.execute("""
                 SELECT shaxar_yoki_tuman
-                    FROM public.geo_list
-                    WHERE lower(viloyat)=lower(%s)
-                    AND lower(shaxar_yoki_tuman_nomi)=lower(%s)
-                    LIMIT 1
+                  FROM public.geo_list
+                 WHERE lower(viloyat)=lower(%s)
+                   AND lower(shaxar_yoki_tuman_nomi)=lower(%s)
+                 LIMIT 1
             """, [viloyat.strip(), nomi.strip()])
-            row = cur.fetchone()
-            if not row:
+            geo_row = cur.fetchone()
+            if not geo_row:
                 return JsonResponse({"detail": f"geo_list да топилмади: {viloyat} / {nomi}"}, status=404)
 
-            turi = row[0]
+            turi = geo_row[0]
             shahar = nomi if turi == "шаҳар" else None
             tuman  = nomi if turi == "туман" else None
 
-            # 2) промкод бўлса — агент
+            # 2) promkod bo‘lsa — agent ma’lumotini olish
             agent_name = None
             if promkod:
                 cur.execute("SELECT id, agent_name FROM public.agent_account WHERE agent_promkod=%s LIMIT 1", [promkod])
@@ -558,7 +563,7 @@ def register_boss(request: HttpRequest, payload: str = ""):
                     return JsonResponse({"detail": "Промкод топилмади."}, status=400)
                 agent_name = a[1]
 
-            # 3) accounts_business UPSERT — ТИЛНИ ҲАМ САҚЛАЙМИЗ
+            # 3) accounts_business UPSERT — tilni ham saqlaymiz
             cur.execute("""
                 INSERT INTO public.accounts_business
                     (id, name, viloyat, shaxar, tuman, boss_tel_num, agent_name, agent_promkod, lang)
@@ -576,114 +581,493 @@ def register_boss(request: HttpRequest, payload: str = ""):
             """, [tg_id, full_name, viloyat, shahar, tuman, phone_norm, agent_name, promkod, lang])
             user_id = int(cur.fetchone()[0])
 
-            # 4) парол
-            password = _make_password(user_id)
-            cur.execute("UPDATE public.accounts_business SET password=%s WHERE id=%s", [password, user_id])
+            # 4) parolni yaratish va HASH saqlash
+            password_raw = _make_password(user_id)
+            password_hash = make_password(password_raw)
+            cur.execute("UPDATE public.accounts_business SET password=%s WHERE id=%s", [password_hash, user_id])
 
-            # 5) агент JSONB бириктириш
+            # 5) agent JSONB biriktirish (ixtiyoriy)
             if promkod:
                 cur.execute("""
                     UPDATE public.agent_account
-                        SET business_id = COALESCE(business_id, '{}'::jsonb)
-                                            || jsonb_build_object(%s::text, %s::text)
-                        WHERE agent_promkod=%s
+                       SET business_id = COALESCE(business_id, '{}'::jsonb)
+                                         || jsonb_build_object(%s::text, %s::text)
+                     WHERE agent_promkod=%s
                 """, [full_name, str(tg_id), promkod])
 
-        # --- Telegram хабар (сақланган/lang’дан фойдаланамиз)
+        # ✅ AUDIT — muvaffaqiyatli ro‘yxatdan o‘tdi
+        audit_log("reg_ok", request, actor_id=user_id, status=200,
+                  meta={"phone": phone_norm, "lang": lang, "source": source, "promkod": promkod})
+
+        # --- Telegram xabar (lang bo‘yicha)
         messages = {
             "uz": (
                 f"Ҳурматли фойдаланувчи, сиз <code>{tg_id}</code> ID рақами билан рўйхатдан ўтдингиз ✅\n\n"
-                f"🛡 Сизнинг вақтинчалик паролингиз:\n🔑 <code>{password}</code>\n\n"
+                f"🛡 Сизнинг вақтинчалик паролингиз:\n🔑 <code>{password_raw}</code>\n\n"
                 f"🛡 Сизнинг контактингиз:\n📞 <code>{phone_norm}</code>\n\n"
                 f"🛡 Сиз <code>BOSS (бизнесс эгаси)</code> фойдаланувчи турида рўйхатдан ўтдингиз.\n\n"
                 f"Илованинг “Хавфсизлик → Паролни ўзгартириш” бўлими орқали ўз паролингизни янгилашни тавсия қиламиз."
             ),
             "uz_lat": (
                 f"Hurmatli foydalanuvchi, siz <code>{tg_id}</code> ID raqami bilan ro‘yxatdan o‘tdingiz ✅\n\n"
-                f"🛡 Sizning vaqtinchalik parolingiz:\n🔑 <code>{password}</code>\n\n"
+                f"🛡 Sizning vaqtinchalik parolingiz:\n🔑 <code>{password_raw}</code>\n\n"
                 f"🛡 Sizning kontaktingiz:\n📞 <code>{phone_norm}</code>\n\n"
                 f"🛡 Siz <code>BOSS (biznes egasi)</code> foydalanuvchi turida ro‘yxatdan o‘tdingiz.\n\n"
                 f"Ilovaning “Xavfsizlik → Parolni o‘zgartirish” bo‘limi orqali o‘z parolingizni yangilashingizni tavsiya qilamiz."
             ),
             "ru": (
                 f"Уважаемый пользователь, Вы зарегистрировались с ID <code>{tg_id}</code> ✅\n\n"
-                f"🛡 Ваш временный пароль:\n🔑 <code>{password}</code>\n\n"
+                f"🛡 Ваш временный пароль:\n🔑 <code>{password_raw}</code>\n\n"
                 f"🛡 Ваш контакт:\n📞 <code>{phone_norm}</code>\n\n"
                 f"🛡 Вы зарегистрированы как <code>BOSS (владелец бизнеса)</code>.\n\n"
                 f"Рекомендуем изменить пароль в разделе «Безопасность → Сменить пароль»."
             ),
             "en": (
                 f"Dear user, you have successfully registered with ID <code>{tg_id}</code> ✅\n\n"
-                f"🛡 Your temporary password:\n🔑 <code>{password}</code>\n\n"
+                f"🛡 Your temporary password:\n🔑 <code>{password_raw}</code>\n\n"
                 f"🛡 Your contact:\n📞 <code>{phone_norm}</code>\n\n"
                 f"🛡 You are registered as <code>BOSS (business owner)</code>.\n\n"
                 f"We recommend changing your password in the app section “Security → Change Password”."
             ),
         }
-        text = messages.get(lang, messages["uz"])
+        text_to_send = messages.get(lang, messages["uz"])
 
-        ok, _ = _send_tg_message(tg_id, text)
-        return JsonResponse({"ok": True, "id": user_id, "password": password, "tg_sent": ok}, status=200)
+        sent_ok, _meta = _send_tg_message(tg_id, text_to_send)
+
+        return JsonResponse(
+            {"ok": True, "id": user_id, "password": password_raw, "tg_sent": sent_ok},
+            status=200,
+            json_dumps_params={"ensure_ascii": False},
+        )
 
     except Exception as e:
         return JsonResponse({"detail": f"Ички хатолик: {e}"}, status=500)
+    
 # Паролни алмаштириш хабари    
-def _forgot_password_text(lang: str, password: str) -> str:
-    # 4 тилда тайёр хабар (ихтиёрий, истаса узгартиришингиз мумкин)
+VERIFY_CODE_TTL_SECONDS = 180  # 3 дақиқа
+MAX_CODE_ATTEMPTS = 5
+
+def _forgot_code_text(lang: str, code: str) -> str:
     msgs = {
-        "uz":  f"Сиз илова орқали паролни янгиладингиз.\nВақтинчалик парол: <code>{password}</code>\n\nИлованинг “Хавфсизлик → Паролни ўзгартириш” бўлими орқали ўз паролингизни янгилашни тавсия қиламиз.",
-        "uz_lat": f"Siz ilova orqali parolni yangiladingiz.\nVaqtinchalik parol: <code>{password}</code>\n\nIlovaning “Xavfsizlik → Parolni o'zgartirish” bo'limi orqali o'z parolingizni yangilashingizni tavsiya qilamiz.",
-        "ru":  f"Вы обновили пароль через приложение.\nВременный пароль: <code>{password}</code>\n\nРекомендуем сменить его в разделе «Безопасность → Смена пароля».",
-        "en":  f"You have reset your password in the app.\nTemporary password: <code>{password}</code>\n\nPlease change it in “Security → Change password”.",
+        "uz":     f"Паролни янгилаш учун 4 хонали код: <code>{code}</code>\nКод 3 дақиқа давомида амал қилади. Иловадаги “Вақтинчалик код киритиш” саҳифасига шу кодни киритинг.",
+        "uz_lat": f"Parolni yangilash uchun 4 xonali kod: <code>{code}</code>\nKod 3 daqiqa amal qiladi. Ilovadagi “Vaqtinchalik kod kiritish” sahifasiga shu kodni kiriting.",
+        "ru":     f"Код для смены пароля: <code>{code}</code>\nКод действует 3 минуты. Введите его в приложении на странице «Временный код».",
+        "en":     f"Password reset code: <code>{code}</code>\nThe code is valid for 3 minutes. Enter it in the app on the “Temporary code” page.",
     }
     return msgs.get(lang, msgs["uz"])
 
-# Паролни алмаштириш хабарини юбориш ва саклаш функцияси
+def _forgot_password_text(lang: str, password: str) -> str:
+    msgs = {
+        "uz":     f"Сиз паролни янгиладингиз.\nВақтинчалик парол: <code>{password}</code>\n\nИлованинг “Хавфсизлик → Паролни ўзгартириш” бўлими орқали ўз паролингизни янгилан.",
+        "uz_lat": f"Siz parolni yangiladingiz.\nVaqtinchalik parol: <code>{password}</code>\n\nIlovaning “Xavfsizlik → Parolni o‘zgartirish” bo‘limi orqali o‘z parolingizni yangilang.",
+        "ru":     f"Вы обновили пароль.\nВременный пароль: <code>{password}</code>\n\nРекомендуем сменить его в разделе «Безопасность → Смена пароля».",
+        "en":     f"Your password was reset.\nTemporary password: <code>{password}</code>\n\nPlease change it in “Security → Change password”.",
+    }
+    return msgs.get(lang, msgs["uz"])
+
+#код юбориш эндпоинти
 @csrf_exempt
-def forgot_boss_password(request):
+def forgot_boss_password_start(request):
     """
-    POST /accounts/boss/forgot-password/
-    Body (JSON): { "id": <chat_id:int> }
+    Body: { "id": <int> }  ёки  { "boss_tel_num": "<str>" } (alias: "phone")
     """
-    # --- Кирувчи маълумот
     try:
         data = json.loads((request.body or b"").decode("utf-8") or "{}")
     except Exception:
         data = {}
-    chat_id = data.get("id") or request.GET.get("id")
-    try:
-        chat_id = int(chat_id)
-    except Exception:
-        return JsonResponse({"detail": "id талаб қилинади."}, status=400)
 
-    # --- Фойдаланувчи мавжудми ва тили
+    raw_id    = data.get("id") or request.GET.get("id")
+    raw_phone = data.get("boss_tel_num") or data.get("phone") \
+             or request.GET.get("boss_tel_num") or request.GET.get("phone")
+
+    chat_id = None
+    lang = "uz"
+    boss_phone = ""
+
     with connection.cursor() as cur:
-        cur.execute("SELECT lang FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id])
-        row = cur.fetchone()
-    if not row:
-        return JsonResponse({"detail": "Фойдаланувчи топилмади."}, status=404)
+        if raw_id:
+            try:
+                chat_id = int(str(raw_id).strip())
+            except Exception:
+                # ❗️АУДИТ: нотўғри ID формати
+                audit_log("fp_start_fail", request, actor_id=None, status=400,
+                          meta={"reason": "bad_id_format", "raw_id": raw_id})
+                return JsonResponse({"detail": "id нотўғри форматда."}, status=400)
 
-    lang = row[0] or "uz"
+            cur.execute(
+                "SELECT id, COALESCE(lang,'uz'), COALESCE(boss_tel_num,'') "
+                "FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id]
+            )
+            row = cur.fetchone()
+            if not row:
+                # ❗️АУДИТ: фойдаланувчи топилмади
+                audit_log("fp_start_fail", request, actor_id=chat_id, status=404,
+                          meta={"reason": "user_not_found_by_id"})
+                return JsonResponse({"detail": "Фойдаланувчи топилмади."}, status=404)
+            chat_id, lang, boss_phone = row
 
-    # --- Янгидан парол тузиш ва базада сақлаш
-    new_password = _make_password(chat_id)
+        elif raw_phone:
+            phone = _normalize_phone(raw_phone) if "_normalize_phone" in globals() \
+                    else _normalize_phone_fallback(raw_phone)
+
+            cur.execute(
+                "SELECT id, COALESCE(lang,'uz'), COALESCE(boss_tel_num,'') "
+                "FROM public.accounts_business WHERE boss_tel_num=%s", [phone]
+            )
+            rows = cur.fetchall()
+            if not rows:
+                # ❗️АУДИТ: телефон бўйича топилмади
+                audit_log("fp_start_fail", request, actor_id=None, status=404,
+                          meta={"reason": "user_not_found_by_phone", "phone": phone})
+                return JsonResponse({"detail": "Ушбу телефон бўйича ҳисоб топилмади."}, status=404)
+            if len(rows) > 1:
+                # ❗️АУДИТ: бир телефонга бир нечта аккаунт
+                audit_log("fp_start_fail", request, actor_id=None, status=409,
+                          meta={"reason": "multiple_accounts_for_phone", "phone": phone})
+                return JsonResponse({"detail": "Бу телефонга бир нечта ҳисоб бор. Илтимос ID киритинг."}, status=409)
+            chat_id, lang, boss_phone = rows[0]
+        else:
+            # ❗️АУДИТ: параметрлар етишмайди
+            audit_log("fp_start_fail", request, actor_id=None, status=400,
+                      meta={"reason": "id_or_phone_required"})
+            return JsonResponse({"detail": "id ёки boss_tel_num талаб қилинади."}, status=400)
+
+    # 4 хонали код
+    code = "".join(secrets.choice(string.digits) for _ in range(4))
+    expires_at = timezone.now() + timezone.timedelta(seconds=VERIFY_CODE_TTL_SECONDS)
+
+    # базада сақлаш
     with connection.cursor() as cur:
         cur.execute(
-            "UPDATE public.accounts_business SET password=%s WHERE id=%s",
-            [new_password, chat_id]
+            "UPDATE public.accounts_business "
+            "SET reset_code=%s, reset_code_expires_at=%s, reset_code_attempts=0 "
+            "WHERE id=%s",
+            [code, expires_at, chat_id]
         )
 
-    # --- Хабарни юбориш
-    msg = _forgot_password_text(lang, new_password)
-    ok, meta = _send_tg_message(chat_id, msg)
+    # ❗️АУДИТ: муваффақиятли старт (код базада сақланди)
+    audit_log("fp_start", request, actor_id=chat_id, status=200,
+              meta={"expires_in": VERIFY_CODE_TTL_SECONDS})
+
+    # Телеграмга вақтинчалик кодни юбориш (телеграмга кетмаса ҳам 200 берaсиз — лекин аудитинизда белгилаб қўйинг)
+    send_text = _forgot_code_text(lang, code)
+    sent, meta = _send_tg_message(chat_id, send_text)
+
+    # (ихтиёрий) агар телеграм юбориш омадсиз бўлса, алоҳида аудит ёзуви:
+    if not sent:
+        audit_log("fp_start_warn", request, actor_id=chat_id, status=200,
+                  meta={"reason": "telegram_send_failed", "tg_meta": meta})
 
     return JsonResponse(
         {
             "ok": True,
             "id": chat_id,
-            "password": new_password,   # истасангиз, жавобдан олиб ташлашингиз мумкин
-            "telegram": {"sent": ok},
-            "telegram": {"sent": meta},
+            "boss_tel_num": boss_phone,
+            "lang": lang,
+            "telegram": {"sent": sent},
+            "expires_in": VERIFY_CODE_TTL_SECONDS,
+            "postmen_msg": meta
+        },
+        json_dumps_params={"ensure_ascii": False}
+    )
+
+def _normalize_phone_fallback(raw: str) -> str:
+    """
+    Телефон рақамини нормаллаштириш: фақат рақам ва '+' қолдирамиз,
+    Ўзбекистон форматида бўлса +998 префиксни қўйиб қўямиз.
+    """
+    if not raw:
+        return ""
+    s = "".join(ch for ch in str(raw) if ch.isdigit() or ch == "+")
+    # allaqachon + bilan bo'lsa — qaytaramiz
+    if s.startswith("+"):
+        return s
+    # 998 bilan boshlangan bo'lsa — +998... ga aylantiramiz
+    if s.startswith("998"):
+        return "+" + s
+    # 00 bilan boshlansa (xalqaro) → 00 ni olib tashlab qaytaramiz
+    if s.startswith("00") and len(s) > 2:
+        s = s[2:]
+        if s.startswith("998"):
+            return "+" + s
+    return s
+
+
+# Паролни алмаштириш хабарини юбориш ва саклаш функцияси
+@csrf_exempt
+def forgot_boss_password_verify(request):
+    """
+    Body: { "id": <int>, "code": "1234" }  ёки  { "boss_tel_num": "<str>", "code": "1234" }
+    """
+    try:
+        data = json.loads((request.body or b"").decode("utf-8") or "{}")
+    except Exception:
+        data = {}
+
+    code = (data.get("code") or "").strip()
+    if not (code.isdigit() and len(code) == 4):
+        # аудит: код формати хатто
+        audit_log("fp_verify_fail", request, actor_id=None, status=400,
+                  meta={"reason": "bad_code_format", "code": code})
+        return JsonResponse({"detail": _code_err("uz", "wrong")}, status=400)  # тил номаълум, uz'га фоллбек
+
+    raw_id    = data.get("id") or request.GET.get("id")
+    raw_phone = data.get("boss_tel_num") or data.get("phone") \
+             or request.GET.get("boss_tel_num") or request.GET.get("phone")
+
+    chat_id = None
+    lang = "uz"
+
+    with connection.cursor() as cur:
+        if raw_id:
+            try:
+                chat_id = int(str(raw_id).strip())
+            except Exception:
+                audit_log("fp_verify_fail", request, actor_id=None, status=400,
+                          meta={"reason": "bad_id_format", "raw_id": raw_id})
+                return JsonResponse({"detail": "id нотўғри форматда."}, status=400)
+
+            cur.execute(
+                "SELECT COALESCE(lang,'uz'), reset_code, reset_code_expires_at, reset_code_attempts "
+                "FROM public.accounts_business WHERE id=%s LIMIT 1",
+                [chat_id],
+            )
+            row = cur.fetchone()
+            if not row:
+                audit_log("fp_verify_fail", request, actor_id=chat_id, status=404,
+                          meta={"reason": "user_not_found_by_id"})
+                return JsonResponse({"detail": "Фойдаланувчи топилмади."}, status=404)
+            lang, db_code, exp_at, attempts = row
+
+        elif raw_phone:
+            phone = _normalize_phone(raw_phone) if "_normalize_phone" in globals() \
+                    else _normalize_phone_fallback(raw_phone)
+            cur.execute(
+                "SELECT id, COALESCE(lang,'uz'), reset_code, reset_code_expires_at, reset_code_attempts "
+                "FROM public.accounts_business WHERE boss_tel_num=%s",
+                [phone],
+            )
+            rows = cur.fetchall()
+            if not rows:
+                audit_log("fp_verify_fail", request, actor_id=None, status=404,
+                          meta={"reason": "user_not_found_by_phone", "phone": phone})
+                return JsonResponse({"detail": "Ушбу телефон бўйича ҳисоб топилмади."}, status=404)
+            if len(rows) > 1:
+                audit_log("fp_verify_fail", request, actor_id=None, status=409,
+                          meta={"reason": "multiple_accounts_for_phone", "phone": phone})
+                return JsonResponse({"detail": "Бу телефонга бир нечта ҳисоб бор. Илтимос ID киритинг."}, status=409)
+            chat_id, lang, db_code, exp_at, attempts = rows[0]
+        else:
+            audit_log("fp_verify_fail", request, actor_id=None, status=400,
+                      meta={"reason": "id_or_phone_required"})
+            return JsonResponse({"detail": "id ёки boss_tel_num талаб қилинади."}, status=400)
+
+    # --- текширишлар
+    now = timezone.now()
+    if not db_code:
+        audit_log("fp_verify_fail", request, actor_id=chat_id, status=400,
+                  meta={"reason": "no_code"})
+        return JsonResponse({"detail": _code_err(lang, "no_code")}, status=400)
+
+    if exp_at and now > exp_at:
+        # ✅ Сиз сўраган аудит: expired
+        audit_log("fp_verify_fail", request, actor_id=chat_id, status=410,
+                  meta={"reason": "expired"})
+        return JsonResponse({"detail": _code_err(lang, "expired")}, status=410)
+
+    if attempts is not None and attempts >= MAX_CODE_ATTEMPTS:
+        audit_log("fp_verify_fail", request, actor_id=chat_id, status=429,
+                  meta={"reason": "too_many"})
+        return JsonResponse({"detail": _code_err(lang, "too_many")}, status=429)
+
+    if code != db_code:
+        with connection.cursor() as cur:
+            cur.execute(
+                "UPDATE public.accounts_business "
+                "SET reset_code_attempts = COALESCE(reset_code_attempts,0) + 1 "
+                "WHERE id=%s",
+                [chat_id],
+            )
+        # ✅ Сиз сўраган аудит: wrong_code
+        audit_log("fp_verify_fail", request, actor_id=chat_id, status=400,
+                  meta={"reason": "wrong_code"})
+        return JsonResponse({"detail": _code_err(lang, "wrong")}, status=400)
+
+    # --- Код тўғри — вақтинчалик парол яратиб, хэшлаш ва сақлаш
+    temp_password = _make_password(chat_id)
+    hashed = make_password(temp_password)
+
+    with connection.cursor() as cur:
+        cur.execute(
+            "UPDATE public.accounts_business "
+            "SET password=%s, reset_code=NULL, reset_code_expires_at=NULL, reset_code_attempts=0 "
+            "WHERE id=%s",
+            [hashed, chat_id],
+        )
+
+    # Ботга вақтинчалик паролни юбориш
+    msg = _forgot_password_text(lang, temp_password)
+    sent, meta = _send_tg_message(chat_id, msg)
+
+    # ✅ Сиз сўраган аудит: verify_ok
+    audit_log("fp_verify_ok", request, actor_id=chat_id, status=200,
+              meta={"telegram_sent": bool(sent)})
+
+    # (ихтиёрий) агар телеграм юбориш омадсиз бўлса, истасак алоҳида warn лог қўйишимиз мумкин:
+    audit_log("fp_verify_warn", request, actor_id=chat_id, status=200,
+              meta={"reason": "telegram_send_failed", "tg_meta": meta})
+
+    resp = {
+        "ok": True,
+        "id": chat_id,
+        "telegram": {"sent": sent},
+    }
+    if getattr(settings, "DEBUG", False):
+        resp["__dev_password_preview"] = temp_password  # фақат DEVда
+    return JsonResponse(resp, json_dumps_params={"ensure_ascii": False})
+
+
+# 4 тилли хатлик хабарлари
+_CODE_ERRORS = {
+    "no_code": {
+        "uz":     "Код сўралмаган ёки бекор қилинган.",
+        "uz_lat": "Kod so'ralmagan yoki bekor qilingan.",
+        "ru":     "Код не запрашивался или был отменён.",
+        "en":     "The code was not requested or has been canceled.",
+    },
+    "expired": {
+        "uz":     "Код муддати тугаган. Яна код сўранг.",
+        "uz_lat": "Kod muddati tugagan. Yana kod so'rang.",
+        "ru":     "Срок действия кода истёк. Запросите новый.",
+        "en":     "The code has expired. Please request a new one.",
+    },
+    "too_many": {
+        "uz":     "Уринишлар сони чекланган. Яна код сўранг.",
+        "uz_lat": "Urinishlar soni cheklangan. Yana kod so'rang.",
+        "ru":     "Превышен лимит попыток. Запросите новый код.",
+        "en":     "Too many attempts. Please request a new code.",
+    },
+    "wrong": {
+        "uz":     "Вақтинчалик код нотўғри.",
+        "uz_lat": "Vaqtinchalik kod noto'g'ri.",
+        "ru":     "Временный код неверный.",
+        "en":     "Incorrect temporary code.",
+    },
+}
+
+def _code_err(lang: str, key: str) -> str:
+    lang = lang if lang in {"uz", "uz_lat", "ru", "en"} else "uz"
+    return _CODE_ERRORS[key][lang]
+
+
+# Ихтиёрий: 4 тилда Босс логин хабарлари
+_AUTH_MSG = {
+    "bad_input": {
+        "uz":     "ID ва парол талаб қилинади.",
+        "uz_lat": "ID va parol talab qilinadi.",
+        "ru":     "Требуются ID и пароль.",
+        "en":     "ID and password are required.",
+    },
+    "invalid": {
+        "uz":     "ID ёки парол нотўғри.",
+        "uz_lat": "ID yoki parol noto'g'ri.",
+        "ru":     "Неверный ID или пароль.",
+        "en":     "Invalid ID or password.",
+    },
+    "ok": {
+        "uz":     "Сиз тизимга муваффақиятли кирдингиз.",
+        "uz_lat": "Siz tizimga muvaffaqiyatli kirdingiz.",
+        "ru":     "Вы успешно вошли.",
+        "en":     "Signed in successfully.",
+    }
+}
+
+def _t(lang: str, key: str) -> str:
+    lang = lang if lang in {"uz","uz_lat","ru","en"} else "uz"
+    return _AUTH_MSG[key][lang]
+
+@csrf_exempt
+def boss_login(request):
+    """
+    POST /accounts/boss/login/
+    Body: { "boss_user_id": <int>, "password": "<str>" }
+    """
+    # 1) Кирувчи JSON
+    try:
+        data = json.loads((request.body or b"").decode("utf-8") or "{}")
+    except Exception:
+        data = {}
+    raw_id = data.get("boss_user_id")
+    raw_pw = data.get("password")
+
+    # Кирувчи валидация
+    if raw_id is None or not raw_pw:
+        audit_log("login_fail", request, actor_id=None, status=400,
+                  meta={"reason": "bad_input"})
+        return JsonResponse({"detail": "ID ва парол талаб қилинади."},
+                            status=400, json_dumps_params={"ensure_ascii": False})
+
+    try:
+        chat_id = int(str(raw_id).strip())
+    except Exception:
+        audit_log("login_fail", request, actor_id=None, status=400,
+                  meta={"reason": "bad_id_format", "raw_id": raw_id})
+        return JsonResponse({"detail": "ID нотўғри форматда."},
+                            status=400, json_dumps_params={"ensure_ascii": False})
+
+    # 2) Фойдаланувчини олиш
+    with connection.cursor() as cur:
+        cur.execute(
+            "SELECT id, name, COALESCE(lang,'uz'), password "
+            "FROM public.accounts_business WHERE id=%s LIMIT 1",
+            [chat_id],
+        )
+        row = cur.fetchone()
+
+    if not row:
+        # user enumeration’ни олдини олиш учун 401
+        audit_log("login_fail", request, actor_id=chat_id, status=401,
+                  meta={"reason": "user_not_found"})
+        return JsonResponse({"detail": "ID ёки парол нотўғри."},
+                            status=401, json_dumps_params={"ensure_ascii": False})
+
+    _id, name, lang, hashed = row
+
+    # 3) Паролни текшириш
+    if not (hashed and check_password(raw_pw, hashed)):
+        audit_log("login_fail", request, actor_id=chat_id, status=401,
+                  meta={"reason": "bad_password"})
+        return JsonResponse({"detail": "ID ёки парол нотўғри."},
+                            status=401, json_dumps_params={"ensure_ascii": False})
+
+    # 4) Охирги фаол вақтни янгилаш (last_seen_at бор бўлса шуни, бўлмаса created_at’ни)
+    now = timezone.now()
+    with connection.cursor() as cur:
+        cur.execute("""
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema='public' AND table_name='accounts_business' AND column_name='last_seen_at'
+              ) THEN
+                UPDATE public.accounts_business SET last_seen_at = %s WHERE id = %s;
+              ELSE
+                UPDATE public.accounts_business SET created_at = %s WHERE id = %s;
+              END IF;
+            END$$;
+        """, [now, chat_id, now, chat_id])
+
+    # 5) Муваффақият — аудит
+    audit_log("login_success", request, actor_id=chat_id, status=200)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "detail": "Муваффақиятли кирдингиз.",
+            "id": chat_id,
+            "name": name,
+            "lang": lang,
+            "last_active_at": now.isoformat(),
         },
         json_dumps_params={"ensure_ascii": False}
     )

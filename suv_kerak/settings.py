@@ -74,6 +74,23 @@ INSTALLED_APPS = [
     'finance',
 ]
 
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "jsonline": {
+            "format": "%(message)s"  # biz middleware'da allaqachon JSON string yollaymiz
+        },
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "jsonline"},
+    },
+    "loggers": {
+        "access": {"handlers": ["console"], "level": "INFO", "propagate": False},  # 👈
+    },
+}
+
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
@@ -84,7 +101,28 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "suv_kerak.middleware.AccessLogMiddleware",
 ]
+
+
+try:
+    import argon2  # noqa
+    PASSWORD_HASHERS = [
+        "django.contrib.auth.hashers.Argon2PasswordHasher",
+        "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+        "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+        "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+        "django.contrib.auth.hashers.ScryptPasswordHasher",
+    ]
+except ImportError:
+    PASSWORD_HASHERS = [
+        "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+        "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+        "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+        "django.contrib.auth.hashers.ScryptPasswordHasher",
+    ]
+
+
 
 ROOT_URLCONF = 'suv_kerak.urls'
 

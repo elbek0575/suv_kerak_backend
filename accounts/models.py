@@ -7,60 +7,69 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+# accounts/models.py
+from django.db import models
+from django.core.exceptions import ValidationError
+from django.utils import timezone
+
+
 class Business(models.Model):
-    name = models.CharField(max_length=120, unique=True)
+    id = models.BigAutoField(primary_key=True)
+    name = models.CharField(max_length=120)  # unique эмас — скринда кўринмайди
 
-    sana          = models.DateField(default=timezone.localdate, editable=False)
-    tg_token      = models.TextField(unique=True, null=True, blank=True)             # 🔁 матн (token)
-    link_tg_group = models.URLField(max_length=255, unique=True, null=True, blank=True)
+    # vaqt клонкалари
+    created_at = models.DateTimeField(auto_now_add=True)  # DB'да default now() AT TIME ZONE ... бор
+    last_seen_at = models.DateTimeField(null=True, blank=True)
 
-    viloyat = models.TextField(null=True, blank=True)
-    shaxar  = models.TextField(null=True, blank=True)
-    tuman   = models.TextField(null=True, blank=True)
-    boss_tel_num = models.CharField(
-        max_length=15, null=True, blank=True, db_column="boss_tel_num"
-    )    
-
-    agent_name    = models.CharField(max_length=55, null=True, blank=True)
+    # агент ма'lumotлари
+    agent_name = models.CharField(max_length=55, null=True, blank=True)
     agent_promkod = models.TextField(null=True, blank=True)
+    link_tg_group = models.URLField(max_length=255, null=True, blank=True)
 
-    # 🧾 Сув нархлари JSON (диапазонлар)
+    # нарх диапазонлари даври (month/year)
+    narxlar_diap_davri = models.CharField(max_length=8, null=True, blank=True, db_index=True)
+
+    # ҳисоблагичлар
+    oy_bosh_sotil_suv_soni = models.IntegerField(null=True, blank=True)
+    yil_bosh_sotil_suv_soni = models.IntegerField(null=True, blank=True)
+
+    # сана ва сервис қоидалари
+    sana = models.DateField(default=timezone.localdate, editable=False)
     service_price_rules = models.JSONField(null=True, blank=True)
 
-    DIAP_DAVR = (("month", "month"), ("year", "year"))
-    narxlar_diap_davri = models.CharField(max_length=8, choices=DIAP_DAVR, null=True, blank=True)
-    
-     # 📌 Тил
-    LANG_CHOICES = (
-        ("uz", "Uzbek (Cyrillic)"),
-        ("uz_lat", "Uzbek (Latin)"),
-        ("ru", "Русский"),
-        ("en", "English"),
-    )
-    lang = models.CharField(max_length=10, choices=LANG_CHOICES, default="uz", db_index=True)
+    # манзил ва TG
+    shaxar = models.TextField(null=True, blank=True)
+    tg_token = models.TextField(null=True, blank=True)          # unique эмас — скринда кўринмайди
+    tuman = models.TextField(null=True, blank=True)
+    viloyat = models.TextField(null=True, blank=True)
 
-    # 📈 ҳисоблагичлар
-    yil_bosh_sotil_suv_soni = models.PositiveIntegerField(null=True, blank=True)
-    oy_bosh_sotil_suv_soni  = models.PositiveIntegerField(null=True, blank=True)
+    # хавфсизлик/аутентификация
+    # (скринда password varchar(255), pin_code varchar(10))
+    password = models.CharField(max_length=255, null=True, blank=True)
+    pin_code = models.CharField(max_length=10, null=True, blank=True)
 
-    # 🟡 Сариқ устунлар (ихтиёрий, хавфсизлик учун plain пароль сақламаслик керак)
-    password = models.CharField(max_length=128, null=True, blank=True)  # ҳеч қачон очиқ парол сақламанг!
-    pin_code = models.CharField(max_length=8,   null=True, blank=True)
+    # тил (скринда varchar(6))
+    lang = models.CharField(max_length=6, default="uz", db_index=True)
 
-    created_at = models.DateTimeField(auto_now_add=True)
+    # телефон ва reset код майдонлари
+    boss_tel_num = models.CharField(max_length=15, null=True, blank=True)
+    reset_code = models.CharField(max_length=6, null=True, blank=True)
+    reset_code_expires_at = models.DateTimeField(null=True, blank=True)
+    reset_code_attempts = models.SmallIntegerField(default=0)
 
     class Meta:
+        managed = False  # мавжуд жадвал билан миграция қилмасдан тўғридан-тўғри ишлаш
         db_table = "accounts_business"
         verbose_name_plural = "Бизнеслар"
         indexes = [
             models.Index(fields=["narxlar_diap_davri"], name="idx_business_diap_davr"),
-            models.Index(fields=["tg_token"], name="idx_business_tg_token"),
+            models.Index(fields=["lang"], name="idx_business_lang"),
         ]
 
     def __str__(self):
         return self.name
 
-    # JSON ни қисқа валидация қилиш
+    # JSON ни қисқа валидация қилиш (ихтиёрий, ўзингиз қўшган қоида сақланди)
     def clean(self):
         rules = self.service_price_rules or []
         segs = []
@@ -72,16 +81,20 @@ class Business(models.Model):
             if mx is not None:
                 mx = int(mx)
             price = int(r.get("price", 0))
-            if mn < 0: raise ValidationError("min манфий бўлмайди.")
-            if mx is not None and mx < mn: raise ValidationError("max >= min бўлсин.")
-            if price <= 0: raise ValidationError("price мусбат бўлсин.")
+            if mn < 0:
+                raise ValidationError("min манфий бўлмайди.")
+            if mx is not None and mx < mn:
+                raise ValidationError("max >= min бўлсин.")
+            if price <= 0:
+                raise ValidationError("price мусбат бўлсин.")
             segs.append((mn, mx))
         segs.sort(key=lambda x: x[0])
         for i in range(1, len(segs)):
-            pmin, pmax = segs[i-1]
-            cmin, _    = segs[i]
+            pmin, pmax = segs[i - 1]
+            cmin, _ = segs[i]
             if pmax is None or pmax >= cmin:
                 raise ValidationError("Нарх диапазонлари ўзаро тўқнашди.")
+
 
 class User(AbstractUser):
     ROLE_CHOICES = (("BOSS","Boss"), ("COURIER","Courier"))
@@ -172,3 +185,41 @@ class GeoList(models.Model):
 
     def __str__(self):
         return f"{self.viloyat} — {self.shaxar_yoki_tuman_nomi} ({self.shaxar_yoki_tuman})"
+
+
+METHOD_CHOICES = [("GET","GET"), ("POST","POST"), ("PUT","PUT"), ("PATCH","PATCH"), ("DELETE","DELETE")]
+ACTION_CHOICES = [
+    ("login_success",  "Кириш муваффақиятли"),
+    ("login_fail",     "Кириш муваффақиятсиз"),
+    ("reg_ok",         "Рўйхатдан ўтди"),
+    ("reg_already",    "Аллақачон рўйхатдан ўтган"),
+    ("fp_start",       "Паролни тиклаш коди юборилди"),
+    ("fp_verify_ok",   "Код тасдиқланди"),
+    ("fp_verify_fail", "Код тасдиқланмади"),
+]
+
+
+class AuditLog(models.Model):
+    ts          = models.DateTimeField()                          # DB default now()
+    actor_id    = models.BigIntegerField(null=True, blank=True, db_index=True)
+    action      = models.CharField(max_length=40, db_index=True, choices=ACTION_CHOICES)
+    path        = models.TextField(blank=True)
+    method      = models.CharField(max_length=8, blank=True, choices=METHOD_CHOICES)
+    status      = models.SmallIntegerField(null=True, blank=True)
+    ip          = models.GenericIPAddressField(null=True, blank=True)  # PostgreSQL inet
+    user_agent  = models.TextField(blank=True)
+    object_type = models.CharField(max_length=30, blank=True)
+    object_id   = models.BigIntegerField(null=True, blank=True)
+    meta        = models.JSONField(null=True, blank=True)              # PostgreSQL jsonb
+
+    class Meta:
+        db_table = "audit_log"
+        managed = False                     # ❗️жадвални SQL билан яратганимиз учун Django қайта яратмайди
+        ordering = ["-ts"]
+
+    def __str__(self):
+        return f"[{self.ts:%Y-%m-%d %H:%M:%S}] {self.action} actor={self.actor_id} obj={self.object_type}:{self.object_id}"
+
+    @property
+    def path_short(self):
+        return (self.path or "")[:80]
