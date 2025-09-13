@@ -1104,7 +1104,7 @@ def boss_   (request):
         """, [now, chat_id, now, chat_id])
 
     # 5) Муваффақият — аудит
-    audit_log("Кириш муваффақиятли", request, actor_id=chat_id, status=200)
+    audit_log("login_success", request, actor_id=chat_id, status=200)
 
     return JsonResponse(
         {
