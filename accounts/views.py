@@ -1034,7 +1034,7 @@ def _t(lang: str, key: str) -> str:
     return _AUTH_MSG[key][lang]
 
 @csrf_exempt
-def boss_   (request):
+def boss_login(request):
     """
     POST /accounts/boss/login/
     Body: { "boss_user_id": <int>, "password": "<str>" }
