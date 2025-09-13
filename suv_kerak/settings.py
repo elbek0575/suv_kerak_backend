@@ -50,8 +50,7 @@ ALLOWED_HOSTS = [
     ".herokuapp.com",                                   # ✅ heroku сабдоменлари
     "127.0.0.1",
     "localhost",
-    ".ngrok-free.app",                                  # ✅ протоколсиз
-    "*"
+    ".ngrok-free.app"
 ]
 
 
