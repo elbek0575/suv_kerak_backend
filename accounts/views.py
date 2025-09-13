@@ -1033,7 +1033,7 @@ def _t(lang: str, key: str) -> str:
     return _AUTH_MSG[key][lang]
 
 @csrf_exempt
-def boss_login(request):
+def boss_   (request):
     """
     POST /accounts/boss/login/
     Body: { "boss_user_id": <int>, "password": "<str>" }
@@ -1104,7 +1104,7 @@ def boss_login(request):
         """, [now, chat_id, now, chat_id])
 
     # 5) Муваффақият — аудит
-    audit_log("login_success", request, actor_id=chat_id, status=200)
+    audit_log("Кириш муваффақиятли", request, actor_id=chat_id, status=200)
 
     return JsonResponse(
         {
