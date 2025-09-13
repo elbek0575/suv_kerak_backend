@@ -470,13 +470,25 @@ def register_boss(request: HttpRequest, payload: str = ""):
         except Exception:
             return JsonResponse({"detail": "tg_id талаб қилинади."}, status=400)
 
-        # 3) payload va til
-        payload_text = (data.get("payload") or "").strip()
-        lang = (payload_text.split(";")[-1].strip() if ";" in payload_text else "") or request.headers.get("Accept-Language", "uz")
-        if lang not in {"uz", "ru", "en", "uz_lat"}:
+        # 3) payload ва тилни йиғиш
+        payload_text = (
+            (data.get("payload") or "")
+            or (request.POST.get("payload") if hasattr(request, "POST") else "")
+            or (request.GET.get("payload") or "")
+        ).strip()
+
+        # Тилни топиш: payload охиридаги ;lang ёки Accept-Language
+        _lang_from_payload = ""
+        if ";" in payload_text:
+            last_piece = payload_text.split(";")[-1].strip().lower()
+            if last_piece in {"uz", "uz_lat", "ru", "en"}:
+                _lang_from_payload = last_piece
+
+        lang = _lang_from_payload or (request.headers.get("Accept-Language", "uz") or "uz").split(",")[0].strip().lower()
+        if lang not in {"uz", "uz_lat", "ru", "en"}:
             lang = "uz"
 
-        # 4) avvaldan ro‘yxatdan o‘tgan-yo‘qligini tekshirish
+        # 4) Олдиндан борми — текшириш (ўша қолсин)
         with connection.cursor() as cur:
             cur.execute("SELECT boss_tel_num FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id])
             row = cur.fetchone()
@@ -484,43 +496,76 @@ def register_boss(request: HttpRequest, payload: str = ""):
         if row:
             phone_existing = row[0] or ""
             msg = already_registered_text(lang, chat_id, phone_existing)
-            # ✅ AUDIT — already registered
             audit_log("reg_already", request, actor_id=chat_id, status=200, meta={"phone": phone_existing})
-
             return JsonResponse(
-                {
-                    "ok": True,
-                    "already": True,
-                    "id": chat_id,
-                    "phone": phone_existing,
-                    "lang": lang,
-                    "message": msg,
-                },
+                {"ok": True, "already": True, "id": chat_id, "phone": phone_existing, "lang": lang, "message": msg},
                 json_dumps_params={"ensure_ascii": False}
             )
 
-        # --- input parsing (payload yoki JSON)
+        # --- input parsing (payload ёки JSON)
         tg_id = full_name = viloyat = nomi = phone = promkod = None
-        source = "payload" if payload else "json"
+        source = "payload" if payload_text else "json"
 
-        if payload:
-            parts = [p.strip() for p in payload.split("/") if p.strip()]
-            if len(parts) < 5:
-                return JsonResponse({"detail": "Маълумот етарли эмас (payload)."}, status=400)
-            tg_id, full_name, viloyat, nomi, phone = int(parts[0]), parts[1], parts[2], parts[3], parts[4]
-            promkod = parts[5] if len(parts) >= 6 and parts[5] else None
+        if payload_text:
+            rp = payload_text
+
+            # "/reg" префиксини олдиради
+            if rp.lower().startswith("/reg"):
+                rp = rp[4:].strip()
+
+            # 1) "ФИШ; Вилоят; Туман; Телефон; [til]; [promkod]" формати
+            if ";" in rp:
+                parts = [p.strip() for p in rp.split(";") if p.strip()]
+                if len(parts) < 4:
+                    return JsonResponse({"detail": "Маълумот етарли эмас (payload ;)"} , status=400)
+
+                full_name, viloyat, nomi, phone = parts[0], parts[1], parts[2], parts[3]
+                # 5-элемент тил бўлиши мумкин — юқорида ажратиб олганмиз
+                # 6-элемент промкод бўлиши мумкин
+                if len(parts) >= 6 and parts[5]:
+                    promkod = parts[5]
+
+                # tg_id payload’да берилмаса, чатдан олганимизни қўйямиз
+                tg_id = chat_id
+
+            else:
+                # 2) "tg_id/full_name/viloyat/nomi/phone[/promkod]" формати
+                parts = [p.strip() for p in rp.split("/") if p.strip()]
+                if len(parts) < 5:
+                    return JsonResponse({"detail": "Маълумот етарли эмас (payload /)"} , status=400)
+
+                # Агар биринчи қиймат рақам бўлмаса — чатдан олганимизни қўйиб, ФИШдан бошлаймиз
+                try:
+                    tg_id = int(parts[0])
+                    idx = 1
+                except Exception:
+                    tg_id = chat_id
+                    idx = 0
+
+                full_name = parts[idx]
+                viloyat   = parts[idx + 1]
+                nomi      = parts[idx + 2]
+                phone     = parts[idx + 3]
+                promkod   = parts[idx + 4] if len(parts) > idx + 4 and parts[idx + 4] else None
+
         else:
-            tg_id     = int(data.get("tg_id"))
+            # Тўлиқ JSON майдонлари
+            try:
+                tg_id     = int(data.get("tg_id"))
+            except Exception:
+                tg_id     = chat_id  # захира сифатида
             full_name = (data.get("full_name") or "").strip()
             viloyat   = (data.get("viloyat") or "").strip()
             nomi      = (data.get("shahar_yoki_tuman") or "").strip()
             phone     = (data.get("phone") or "").strip()
             promkod   = (data.get("promkod") or None) or None
 
-        #if not all([tg_id, full_name, viloyat, nomi, phone]):
-            #return JsonResponse({"detail": "Маълумотлар тўлиқ эмас."}, status=400)
+        # Финал текширув
+        if not all([tg_id, full_name, viloyat, nomi, phone]):
+            return JsonResponse({"detail": "Маълумотлар тўлиқ эмас."}, status=400)
 
         phone_norm = _normalize_phone(phone)
+
 
         # --- DB (UPSERT logikasi)
         with connection.cursor() as cur:
@@ -547,6 +592,7 @@ def register_boss(request: HttpRequest, payload: str = ""):
                  LIMIT 1
             """, [viloyat.strip(), nomi.strip()])
             geo_row = cur.fetchone()
+            print("geo_row", geo_row)
             if not geo_row:
                 return JsonResponse({"detail": f"geo_list да топилмади: {viloyat} / {nomi}"}, status=404)
 
