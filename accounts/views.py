@@ -517,8 +517,8 @@ def register_boss(request: HttpRequest, payload: str = ""):
             phone     = (data.get("phone") or "").strip()
             promkod   = (data.get("promkod") or None) or None
 
-        if not all([tg_id, full_name, viloyat, nomi, phone]):
-            return JsonResponse({"detail": "Маълумотлар тўлиқ эмас."}, status=400)
+        #if not all([tg_id, full_name, viloyat, nomi, phone]):
+            #return JsonResponse({"detail": "Маълумотлар тўлиқ эмас."}, status=400)
 
         phone_norm = _normalize_phone(phone)
 
