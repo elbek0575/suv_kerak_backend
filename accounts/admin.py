@@ -1,6 +1,8 @@
 # accounts/admin.py
 from django.contrib import admin
 from .models import UserMenedjer, Business, GeoList, AuditLog
+import json
+
 
 @admin.register(Business)
 class BusinessAdmin(admin.ModelAdmin):
@@ -45,6 +47,10 @@ class AuditLogAdmin(admin.ModelAdmin):
         except Exception:
             return str(obj.meta)
     meta_pretty.short_description = "meta"
+    
+    def action_uz(self, obj):
+        return obj.get_action_display()          # ← choices’дан лейбл
+    action_uz.short_description = "Амалиёт"
 
     # Audit’ни админдан қўл билан ўзгартирмаслик қулай
     def has_add_permission(self, request): return False
