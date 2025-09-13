@@ -24,6 +24,7 @@ def audit_log(action: str,
         ua = request.META.get("HTTP_USER_AGENT")
         path = request.path
         method = request.method
+        print(f"action {action}")
         with connection.cursor() as cur:
             cur.execute(
                 """
