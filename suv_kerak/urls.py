@@ -44,5 +44,6 @@ urlpatterns = [
     path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz    
     path("webhook/", telegram_webhook, name="telegram_webhook"),  # <-- /webhook/
     path("accounts/", include("accounts.urls")),
+    path('orders/', include('orders.urls')),
 ]
 
