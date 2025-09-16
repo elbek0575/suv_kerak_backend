@@ -95,8 +95,9 @@ def create_buyurtma(request):
       - suv_soni: int (>0) (шарт)
       - lat: float (шарт)
       - lng: float (шарт)
+      - manzil: str (шарт) ✅
       - location_accuracy, location_source (ихтиёрий)
-    Чиқиш: яратилган буюртма маълумоти + манзил (reverse-geocode)
+    Чиқиш: яратилган буюртма маълумоти
     """
     # 1) Payload
     if request.content_type and "application/json" in request.content_type.lower():
@@ -115,13 +116,15 @@ def create_buyurtma(request):
     try:
         suv_soni = int(data.get("suv_soni") or 0)
     except ValueError:
-        suv_sони = 0
+        suv_soni = 0
 
     lat_in = data.get("lat")
     lng_in = data.get("lng")
     acc = data.get("location_accuracy")
     src = (data.get("location_source") or "manual").lower()
+    manzil = (data.get("manzil") or "").strip()  # ✅ ЯНГИ ҚЎШИЛДИ
 
+    # 3) Валидация
     if not business_id:
         return JsonResponse({"detail": "business_id талаб қилинади."}, status=400)
     if not client_tel_num:
@@ -130,8 +133,9 @@ def create_buyurtma(request):
         return JsonResponse({"detail": "Сув сони 1 дан катта бўлсин."}, status=400)
     if lat_in is None or lng_in is None:
         return JsonResponse({"detail": "lat/lng талаб қилинади."}, status=400)
+    if not manzil:
+        return JsonResponse({"detail": "Буюртма манзили талаб қилинади."}, status=400)
 
-    # 3) Lat/Lng валидация
     try:
         lat = Decimal(str(lat_in)); lng = Decimal(str(lng_in))
     except InvalidOperation:
@@ -139,27 +143,23 @@ def create_buyurtma(request):
     if not (-90 <= lat <= 90 and -180 <= lng <= 180):
         return JsonResponse({"detail": "lat/lng диапазони нотўғри."}, status=400)
 
-    # 4) Бизнес бор-йўқ
     if not Business.objects.filter(id=business_id).exists():
         return JsonResponse({"detail": "Бундай business_id мавжуд эмас."}, status=404)
 
-    # 5) Сана/вақт — Тошкент
+    # 4) Сана/вақт
     now = timezone.now()
     now_uz = timezone.localtime(now, UZ_TZ) if UZ_TZ else timezone.localtime(now)
     sana = now_uz.date()
     vaqt = now_uz.time().replace(microsecond=0)
 
-    # 6) Reverse-geocode: координата -> манзил
-    manzil = reverse_geocode(lat, lng) or ""
-
-    # 7) Сақлаш
+    # 5) Сақлаш
     obj = Buyurtma.objects.create(
         business_id=business_id,
         sana=sana, vaqt=vaqt,
         client_tg_id=(int(client_tg_id) if str(client_tg_id).isdigit() else None),
         client_tel_num=client_tel_num,
         suv_soni=suv_soni,
-        manzil=manzil,
+        manzil=manzil,  # ✅ Аниқланган эмас, фойдаланувчи берган
         buyurtma_statusi="pending",
         pay_status=_default_pay_status(),
         lat=lat, lng=lng,
@@ -174,7 +174,7 @@ def create_buyurtma(request):
         "pay_status": obj.pay_status,
         "sana": str(obj.sana),
         "vaqt": str(obj.vaqt),
-        "manzil": obj.manzil,                       # reverse-geocode натижаси
+        "manzil": obj.manzil,
         "coords": {
             "lat": float(obj.lat),
             "lng": float(obj.lng),
