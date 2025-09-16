@@ -4,8 +4,9 @@ import asyncio
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ContentType
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import CommandStart
-from aiogram.types import Message, Update
+from aiogram.types import Update, Message, ContentType
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiogram.exceptions import TelegramBadRequest
 from aiohttp import web
@@ -16,7 +17,7 @@ from django.utils import timezone
 import json, re, time, requests
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
-from django.http import JsonResponse, HttpRequest
+from django.http import JsonResponse, HttpRequest, HttpResponseNotAllowed
 from datetime import datetime
 import secrets, string
 from django.contrib.auth.hashers import make_password, check_password
@@ -52,9 +53,11 @@ async def handle_location(message: Message):
         await message.reply(text)
     except TelegramBadRequest as e:
         # "message to be replied not found" ва шунга ўхшаш хатоларда fallback
+        logging.exception("sendMessage failed, reply javob bukdi.")
         await message.answer(text)
     except Exception:
         # ҳар қандай кутилмаган хатода ҳам fallback
+        logging.exception("sendMessage failed? replysiz javob buldi.")
         await message.answer(text)
         
 # 🔧 AIOHTTP сервер
@@ -67,6 +70,41 @@ async def on_shutdown(app):
 @dp.message(F.text == "/start")
 async def cmd_start(msg: Message):
     await msg.answer("Ассалому алайкум! SUV KERAK боти тайёр.")
+
+
+
+async def _process_update(body_text: str) -> None:
+    update = Update.model_validate_json(body_text)
+    session = AiohttpSession()  # аргументсиз
+    # ⬇️ Бу ерда parse_mode берилади — конструкторда ЭМАС
+    bot_defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
+    async with Bot(token=BOT_TOKEN, session=session, default=bot_defaults) as bot:
+        await dp.feed_update(bot, update)
+
+
+@csrf_exempt
+def aiogram_webhook_view(request):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    try:
+        body = (request.body or b"").decode("utf-8", errors="ignore")
+        if not body.strip():
+            logger.warning("Empty Telegram webhook body")
+            return JsonResponse({"ok": True})
+
+        # Диагностика учун қисқартириб логлаймиз (ихтиёрий)
+        logger.info("Webhook body (trimmed): %s", body[:2048])
+
+        # async қисмни sync’дан чақириш
+        async_to_sync(_process_update)(body)
+
+        # Telegram’га ҳар доим 200
+        return JsonResponse({"ok": True})
+    except Exception:
+        logger.exception("❌ webhook top-level exception")
+        return JsonResponse({"ok": True})
+
 
 
 #Аудит назорат учун қайд логи
@@ -1092,57 +1130,3 @@ def _t(lang: str, key: str) -> str:
     return _AUTH_MSG[key][lang]
 
 
-# @csrf_exempt
-# def telegram_aiogram_webhook(request: HttpRequest):
-#     if request.method != "POST":
-#         return JsonResponse({"error": "Only POST allowed"}, status=405)
-
-#     try:
-#         body = request.body.decode("utf-8")
-#         update = Update.model_validate_json(body)  # ✅ types.Update emas
-#     except Exception as e:
-#         return JsonResponse({"error": f"Invalid update: {e}"}, status=400)
-
-#     # ✅ Django sync → Aiogram async
-#     async_to_sync(dp.feed_update)(bot, update)
-#     return JsonResponse({"ok": True})
-
-
-@csrf_exempt
-def aiogram_webhook_view(request):
-    # 200 қайтаришни ҳеч нарса тўсмаслиги керак
-    try:
-        if request.method != "POST":
-            return JsonResponse({"ok": True})  # GET/HEAD келса ҳам 200
-
-        # 1) Raw body’ни оламиз ва хавфсиз декод қиламиз
-        body_bytes = request.body or b""
-        # Telegram JSON — UTF-8; лекин хар қандай фавқулодда белги учун ignore
-        body_text = body_bytes.decode("utf-8", errors="ignore")
-        if not body_text.strip():
-            logger.warning("Empty body from Telegram")
-            return JsonResponse({"ok": True})
-
-        # (ихтиёрий) тез диагностика учун 5120 та белгиларгача логлаймиз
-        logger.info("Webhook body (trimmed): %s", body_text[:5120])
-
-        # 2) Aiogram v3: Update.model_validate_json()
-        try:
-            update = Update.model_validate_json(body_text)
-        except Exception:
-            logger.exception("❌ Update parse failed")
-            return JsonResponse({"ok": True})
-
-        # 3) dp.feed_update (async -> sync), ҳар қандай истисно 200 билан “йўтилсин”
-        try:
-            async_to_sync(dp.feed_update)(bot, update)
-        except Exception:
-            logger.exception("❌ dp.feed_update failed")
-            return JsonResponse({"ok": True})
-
-        return JsonResponse({"ok": True})
-
-    except Exception:
-        # ЭНДИ ҲЕЧ ҚАНДАЙ ИСТИСНО 500 БЕРМАСИН
-        logger.exception("❌ webhook view top-level exception")
-        return JsonResponse({"ok": True})
