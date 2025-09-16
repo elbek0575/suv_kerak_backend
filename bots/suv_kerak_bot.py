@@ -20,6 +20,7 @@ from django.http import JsonResponse, HttpRequest
 from datetime import datetime
 import secrets, string
 from django.contrib.auth.hashers import make_password, check_password
+import logging
 
 
 # 🔐 Ташқи ўзгарувчиларни юклаймиз
@@ -36,6 +37,8 @@ bot = Bot(
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher()
+
+logger = logging.getLogger(__name__)
 
 # 📍 Геолокацияга жавоб бериш (v3)
 @dp.message(F.content_type == ContentType.LOCATION)  # yoki: @dp.message(lambda m: m.location is not None)
@@ -1107,23 +1110,39 @@ def _t(lang: str, key: str) -> str:
 
 @csrf_exempt
 def aiogram_webhook_view(request):
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
+    # 200 қайтаришни ҳеч нарса тўсмаслиги керак
     try:
-        # 1) Parse Update (aiogram v3, pydantic v2)
-        payload = request.body.decode("utf-8")
-        update = Update.model_validate_json(payload)
-    except Exception:
-        logging.exception("❌ Telegram update parse failed")
-        # Telegram қайта уриниши учун барибир 200 қайтарамиз
+        if request.method != "POST":
+            return JsonResponse({"ok": True})  # GET/HEAD келса ҳам 200
+
+        # 1) Raw body’ни оламиз ва хавфсиз декод қиламиз
+        body_bytes = request.body or b""
+        # Telegram JSON — UTF-8; лекин хар қандай фавқулодда белги учун ignore
+        body_text = body_bytes.decode("utf-8", errors="ignore")
+        if not body_text.strip():
+            logger.warning("Empty body from Telegram")
+            return JsonResponse({"ok": True})
+
+        # (ихтиёрий) тез диагностика учун 5120 та белгиларгача логлаймиз
+        logger.info("Webhook body (trimmed): %s", body_text[:5120])
+
+        # 2) Aiogram v3: Update.model_validate_json()
+        try:
+            update = Update.model_validate_json(body_text)
+        except Exception:
+            logger.exception("❌ Update parse failed")
+            return JsonResponse({"ok": True})
+
+        # 3) dp.feed_update (async -> sync), ҳар қандай истисно 200 билан “йўтилсин”
+        try:
+            async_to_sync(dp.feed_update)(bot, update)
+        except Exception:
+            logger.exception("❌ dp.feed_update failed")
+            return JsonResponse({"ok": True})
+
         return JsonResponse({"ok": True})
 
-    try:
-        # 2) Feed update (async -> sync)
-        async_to_sync(dp.feed_update)(bot, update)
     except Exception:
-        logging.exception("❌ dp.feed_update failed")
-        # Барибир 200, акс ҳолда Telegram қайта-қайта уради
+        # ЭНДИ ҲЕЧ ҚАНДАЙ ИСТИСНО 500 БЕРМАСИН
+        logger.exception("❌ webhook view top-level exception")
         return JsonResponse({"ok": True})
-
-    return JsonResponse({"ok": True})

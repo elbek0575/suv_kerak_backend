@@ -43,6 +43,6 @@ urlpatterns = [
     path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz    
     path("accounts/", include("accounts.urls")),
     path('orders/', include('orders.urls')),
-    path("aiogram-bot-webhook/", aiogram_webhook_view, name="tg_webhook_alias"),
+     path("aiogram-bot-webhook/", aiogram_webhook_view, name="aiogram_webhook"),
 ]
 
