@@ -40,7 +40,7 @@ class Kuryer(models.Model):
     class Meta:
         db_table = "kuryer"
         verbose_name = "Kuryer"
-        verbose_name_plural = "Kuryerlar"
+        verbose_name_plural = "Курерлар"
         indexes = [
             models.Index(fields=["kuryer_id"],            name="idx_kuryer_id"),
             models.Index(fields=["tel_num"],              name="idx_kuryer_tel"),

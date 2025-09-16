@@ -27,14 +27,14 @@ class Buyurtma(models.Model):
 
     PAY_STATUS = (
         ("none", "Йўқ"),
+        ("pend_pay", "Кутилмоқда"),
         ("cash", "Нақд"),
         ("online", "Онлайн"),
     )
     pay_status = models.CharField(max_length=8, choices=PAY_STATUS, default="none")
 
     # FK ва снапшотлар
-    kuryer = models.ForeignKey(Kuryer, on_delete=models.SET_NULL, null=True, blank=True, related_name="buyurtmalar")
-    kuryer_ext_id = models.BigIntegerField(null=True, blank=True)       # ➜ Эски kuryer_id ўрнига тарихий
+    kuryer = models.ForeignKey(Kuryer, on_delete=models.SET_NULL, null=True, blank=True, related_name="buyurtmalar")    
     kuryer_name = models.CharField(max_length=55, blank=True, null=True)
     kuryer_tel_num = models.CharField(max_length=15, blank=True, null=True)
 
@@ -44,6 +44,12 @@ class Buyurtma(models.Model):
 
     qullanilgan_akciya = models.TextField(blank=True, null=True)
     grated = models.DateTimeField(auto_now_add=True)
+    
+    lat  = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    lng  = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    location_accuracy = models.IntegerField(null=True, blank=True)
+    LOCATION_SOURCES = (("tg", "telegram"), ("geocode", "geocode"), ("manual", "manual"))
+    location_source   = models.CharField(max_length=16, choices=LOCATION_SOURCES, default="manual")
 
     class Meta:
         db_table = "buyurtmalar"
