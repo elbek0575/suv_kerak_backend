@@ -817,6 +817,7 @@ def forgot_boss_password_start(request):
     """
     # --- Robust parsing ---
     raw_text = (request.body or b"").decode("utf-8", errors="ignore")
+    print("🧪 raw_text[0:120] =", raw_text[:120], " | POST_keys =", list(request.POST.keys()))
     data = {}
     try:
         data = json.loads(raw_text) if raw_text.strip() else {}
