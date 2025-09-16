@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     'couriers',
     'orders',
     'finance',
+    'bots.apps.BotsConfig', # suv_kerak боти
 ]
 
 LOGGING = {

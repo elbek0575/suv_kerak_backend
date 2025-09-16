@@ -20,8 +20,7 @@ from django.urls import path, include
 from django.shortcuts import render, redirect
 from django.conf import settings
 from django.utils import translation
-from accounts.views import telegram_webhook
-
+from bots.suv_kerak_bot import telegram_aiogram_webhook
 
 def lang_page(request):
     return render(request, "lang.html")   # templates/lang.html
@@ -42,8 +41,8 @@ urlpatterns = [
     path("i18n/", include("django.conf.urls.i18n")),  # POST /i18n/setlang/
     path("lang/", lang_page, name="lang_page"),       # форма саҳифаси
     path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz    
-    path("webhook/", telegram_webhook, name="telegram_webhook"),  # <-- /webhook/
     path("accounts/", include("accounts.urls")),
     path('orders/', include('orders.urls')),
+    path("aiogram-bot-webhook/", telegram_aiogram_webhook, name="tg_webhook_alias"),
 ]
 

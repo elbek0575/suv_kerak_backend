@@ -1,13 +1,69 @@
-# accounts/views.py
-from django.http import JsonResponse, HttpRequest
+# bots/suv_kerak_bot.py
+import os
+import asyncio
+from aiogram import Bot, Dispatcher, F
+from aiogram.enums import ParseMode, ContentType
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import CommandStart
+from aiogram.types import Message, Update
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.exceptions import TelegramBadRequest
+from aiohttp import web
+from asgiref.sync import async_to_sync
+from dotenv import load_dotenv
+from django.db import connection
+from django.utils import timezone
+import json, re, time, requests
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
-from django.db import connection               # ✅ Django connection
+from django.http import JsonResponse, HttpRequest
 from datetime import datetime
-import json, re, time, requests
-from django.contrib.auth.hashers import make_password, check_password
-from django.utils import timezone
 import secrets, string
+from django.contrib.auth.hashers import make_password, check_password
+
+
+# 🔐 Ташқи ўзгарувчиларни юклаймиз
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_PATH = "/aiogram-bot-webhook/"
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # https://xxxx.ngrok-free.app
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+# ✅ Bot ва Dispatcher
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+dp = Dispatcher()
+
+# 📍 Геолокацияга жавоб бериш (v3)
+@dp.message(F.content_type.in_({ContentType.LOCATION, ContentType.VENUE}))  # yoki: @dp.message(lambda m: m.location is not None)
+async def handle_location(message: Message):
+    lat = message.location.latitude
+    lng = message.location.longitude
+    text = f"📍 Мижоз координаталари:\n<code>{lat}</code>, <code>{lng}</code>"
+
+    # 1-уриниш: reply
+    try:
+        await message.reply(text)
+    except TelegramBadRequest as e:
+        # "message to be replied not found" ва шунга ўхшаш хатоларда fallback
+        await message.answer(text)
+    except Exception:
+        # ҳар қандай кутилмаган хатода ҳам fallback
+        await message.answer(text)
+        
+# 🔧 AIOHTTP сервер
+async def on_startup(app):
+    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+
+async def on_shutdown(app):
+    await bot.delete_webhook()
+
+@dp.message(F.text == "/start")
+async def cmd_start(msg: Message):
+    await msg.answer("Ассалому алайкум! SUV KERAK боти тайёр.")
 
 
 #Аудит назорат учун қайд логи
@@ -156,161 +212,161 @@ def unknown_command_text(lang: str) -> str:
     }
     return texts.get(lang, texts["uz"])
 
-# # Вебхук суровига жавоб берувчи функция
-# @csrf_exempt
-# def telegram_webhook(request):
-#     """
-#     Telegram webhook view for the “SUV KERAK” bot.
+# Вебхук суровига жавоб берувчи функция
+@csrf_exempt
+def telegram_webhook(request):
+    """
+    Telegram webhook view for the “SUV KERAK” bot.
 
-#     Қисқача
-#     -------
-#     Telegram’dan келган update’ларни (POST /webhook/) қабул қилади, chat_id ва матнни ажратади,
-#     фойдаланувчининг тилини accounts_business.lang дан олади ва буйруққа қараб жавоб юборади.
+    Қисқача
+    -------
+    Telegram’dan келган update’ларни (POST /webhook/) қабул қилади, chat_id ва матнни ажратади,
+    фойдаланувчининг тилини accounts_business.lang дан олади ва буйруққа қараб жавоб юборади.
 
-#     Қўллаб-қувватланадиган буйруқлар
-#     --------------------------------
-#     • /start
-#         Фойдаланувчига умумий маълумот/йўриқнома хабарини юборади (unknown_command_text(lang)).
-#         (Эслатма: логикангизда start_text() ўрнига unknown_command_text() юборилади.)
+    Қўллаб-қувватланадиган буйруқлар
+    --------------------------------
+    • /start
+        Фойдаланувчига умумий маълумот/йўриқнома хабарини юборади (unknown_command_text(lang)).
+        (Эслатма: логикангизда start_text() ўрнига unknown_command_text() юборилади.)
 
-#     • /reg <FISH>; <Viloyat>; <Shahar/Tuman>; <Telefon>; [Promkod]; [Til]
-#         Агар фойдаланувчи олдин рўйхатдан ўтган бўлса — already_registered_text(lang, chat_id, phone) юборилади.
-#         Акс ҳолда бекендга {BACKEND_BASE_URL}/accounts/boss/register/ га JSON payload юборилади ва
-#         қайтган ID/парол фойдаланувчига етказилади.
+    • /reg <FISH>; <Viloyat>; <Shahar/Tuman>; <Telefon>; [Promkod]; [Til]
+        Агар фойдаланувчи олдин рўйхатдан ўтган бўлса — already_registered_text(lang, chat_id, phone) юборилади.
+        Акс ҳолда бекендга {BACKEND_BASE_URL}/accounts/boss/register/ га JSON payload юборилади ва
+        қайтган ID/парол фойдаланувчига етказилади.
 
-#         Мисоллар:
-#           /reg Аюбов Элбек; Қашқадарё вилояти; Косон; +998991112233; uz
-#           /reg Аюбов Элбек; Қашқадарё вилояти; Косон; +998991112233; ABC123; uz_lat
+        Мисоллар:
+          /reg Аюбов Элбек; Қашқадарё вилояти; Косон; +998991112233; uz
+          /reg Аюбов Элбек; Қашқадарё вилояти; Косон; +998991112233; ABC123; uz_lat
 
-#         Изоҳ:
-#           parse_lang_and_promkod(raw_parts) ёрдамчи функцияси массив охиридан тил ва промкодни ажратиб қайтаради.
-#           Тил келмаса, базадаги lang ёки "uz" қўлланади.
+        Изоҳ:
+          parse_lang_and_promkod(raw_parts) ёрдамчи функцияси массив охиридан тил ва промкодни ажратиб қайтаради.
+          Тил келмаса, базадаги lang ёки "uz" қўлланади.
 
-#     • Бошқа матнлар
-#         unknown_command_text(lang) юборилади.
+    • Бошқа матнлар
+        unknown_command_text(lang) юборилади.
 
-#     Кирувчи маълумот (Telegram Update JSON)
-#     ---------------------------------------
-#     {
-#       "message": {
-#         "chat": {"id": <int>},
-#         "text": "<str>"
-#       }
-#     }
+    Кирувчи маълумот (Telegram Update JSON)
+    ---------------------------------------
+    {
+      "message": {
+        "chat": {"id": <int>},
+        "text": "<str>"
+      }
+    }
 
-#     Четдан боғлиқликлар
-#     -------------------
-#     • settings.TELEGRAM_BOT_TOKEN — Telegram’га sendMessage юбориш учун
-#     • settings.BACKEND_BASE_URL   — бекенд API’сига /accounts/boss/register/ POST қилиш учун
+    Четдан боғлиқликлар
+    -------------------
+    • settings.TELEGRAM_BOT_TOKEN — Telegram’га sendMessage юбориш учун
+    • settings.BACKEND_BASE_URL   — бекенд API’сига /accounts/boss/register/ POST қилиш учун
 
-#     Қайтариладиган жавоб
-#     --------------------
-#     JsonResponse({"ok": True}) — муваффақиятли ишловдан сўнг 200 статус билан.
-#     (Webhook талабига кўра Telegram 2xx кутади; кодингизда хатолик қолса ҳам 200 қайтариш тавсия этилади.)
+    Қайтариладиган жавоб
+    --------------------
+    JsonResponse({"ok": True}) — муваффақиятли ишловдан сўнг 200 статус билан.
+    (Webhook талабига кўра Telegram 2xx кутади; кодингизда хатолик қолса ҳам 200 қайтариш тавсия этилади.)
 
-#     Параметрлар
-#     -----------
-#     request : django.http.HttpRequest
-#         Telegram’dan келган POST сўров.
+    Параметрлар
+    -----------
+    request : django.http.HttpRequest
+        Telegram’dan келган POST сўров.
 
-#     Қайдлар
-#     -------
-#     • Тил accounts_business(lang) дан chat_id бўйича аниқланади.
-#     • send() ичида Telegram’га HTML parse_mode билан хабар юборилади.
-#     """
-#     # ... функция давоми ...
+    Қайдлар
+    -------
+    • Тил accounts_business(lang) дан chat_id бўйича аниқланади.
+    • send() ичида Telegram’га HTML parse_mode билан хабар юборилади.
+    """
+    # ... функция давоми ...
 
-#     data = json.loads(request.body.decode("utf-8") or "{}")
-#     msg  = data.get("message") or {}
-#     chat = msg.get("chat") or {}
-#     chat_id = chat.get("id")
-#     text = (msg.get("text") or "").strip()
+    data = json.loads(request.body.decode("utf-8") or "{}")
+    msg  = data.get("message") or {}
+    chat = msg.get("chat") or {}
+    chat_id = chat.get("id")
+    text = (msg.get("text") or "").strip()
 
-#     def send(txt: str):
-#         requests.post(
-#             f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
-#             json={"chat_id": chat_id, "text": txt, "parse_mode": "HTML"},
-#             timeout=10,
-#         )
+    def send(txt: str):
+        requests.post(
+            f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": txt, "parse_mode": "HTML"},
+            timeout=10,
+        )
 
-#     if not chat_id:
-#         return JsonResponse({"ok": True})
+    if not chat_id:
+        return JsonResponse({"ok": True})
 
-#     # --- lang'ni bazadan олиш (курсор очиб)
-#     with connection.cursor() as cur:
-#         cur.execute("SELECT lang FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id])
-#         row = cur.fetchone()
-#     lang = (row[0] if row and row[0] else "uz")
+    # --- lang'ni bazadan олиш (курсор очиб)
+    with connection.cursor() as cur:
+        cur.execute("SELECT lang FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id])
+        row = cur.fetchone()
+    lang = (row[0] if row and row[0] else "uz")
 
-#     # /start — 4 тилда
-#     # if text.lower().startswith("/start"):
-#     #     send(unknown_command_text(lang))
-#     #     return JsonResponse({"ok": True})
+    # /start — 4 тилда
+    # if text.lower().startswith("/start"):
+    #     send(unknown_command_text(lang))
+    #     return JsonResponse({"ok": True})
 
-#     # /reg — рўйхатдан ўтказиш
-#     if text.lower().startswith("/reg"):
-#         # 0) аввалдан бор-ёқлигини текшириш
-#         with connection.cursor() as cur:
-#             cur.execute("SELECT boss_tel_num FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id])
-#             row = cur.fetchone()
+    # /reg — рўйхатдан ўтказиш
+    if text.lower().startswith("/reg"):
+        # 0) аввалдан бор-ёқлигини текшириш
+        with connection.cursor() as cur:
+            cur.execute("SELECT boss_tel_num FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id])
+            row = cur.fetchone()
 
-#         if row:
-#             phone = row[0]
-#             msg = already_registered_text(lang, chat_id, phone)  # ✅ матнни оламиз
-#             send(msg)            
-#             print("DBG:: already branch, chat_id=", chat_id)
+        if row:
+            phone = row[0]
+            msg = already_registered_text(lang, chat_id, phone)  # ✅ матнни оламиз
+            send(msg)            
+            print("DBG:: already branch, chat_id=", chat_id)
 
-#             return JsonResponse(
-#             {
-#                 "ok": True,
-#                 "already": True,
-#                 "id": chat_id,
-#                 "phone": phone,
-#                 "lang": lang,
-#                 "message": msg,# ✅ Постманга ҳам тўлиқ матн
-#                 "probe": "register_boss_api_v3" 
-#             },
-#             json_dumps_params={"ensure_ascii": False}  # ✅ Кириллни нормал қайтариш
-#         )
+            return JsonResponse(
+            {
+                "ok": True,
+                "already": True,
+                "id": chat_id,
+                "phone": phone,
+                "lang": lang,
+                "message": msg,# ✅ Постманга ҳам тўлиқ матн
+                "probe": "register_boss_api_v3" 
+            },
+            json_dumps_params={"ensure_ascii": False}  # ✅ Кириллни нормал қайтариш
+        )
 
-#         # 1) тил ва промкодни парс қилиш
-#         raw_parts = [p.strip() for p in text[5:].split(";")]
-#         parts, lang_param, promkod = parse_lang_and_promkod(raw_parts)  # sizdagi ёрдамчи функция
-#         # if len(parts) < 4:
-#         #     # етмасада, мавжуд/lang бўйича старт хабарини юбориб қўямиз
-#         #     send(unknown_command_text(lang))
-#         #     return JsonResponse({"ok": True})
+        # 1) тил ва промкодни парс қилиш
+        raw_parts = [p.strip() for p in text[5:].split(";")]
+        parts, lang_param, promkod = parse_lang_and_promkod(raw_parts)  # sizdagi ёрдамчи функция
+        # if len(parts) < 4:
+        #     # етмасада, мавжуд/lang бўйича старт хабарини юбориб қўямиз
+        #     send(unknown_command_text(lang))
+        #     return JsonResponse({"ok": True})
 
-#         payload = {
-#             "tg_id": chat_id,
-#             "full_name": parts[0],
-#             "viloyat": parts[1],
-#             "shahar_yoki_tuman": parts[2],
-#             "phone": parts[3],
-#             # тилни бекендга ҳам узатамиз: келган бўлса — шу, бўлмаса мавжуд/lang
-#             "lang": (lang_param or lang),
-#         }
-#         if promkod:
-#             payload["promkod"] = promkod
+        payload = {
+            "tg_id": chat_id,
+            "full_name": parts[0],
+            "viloyat": parts[1],
+            "shahar_yoki_tuman": parts[2],
+            "phone": parts[3],
+            # тилни бекендга ҳам узатамиз: келган бўлса — шу, бўлмаса мавжуд/lang
+            "lang": (lang_param or lang),
+        }
+        if promkod:
+            payload["promkod"] = promkod
 
-#         url = f"{settings.BACKEND_BASE_URL}/accounts/boss/register/"
-#         try:
-#             resp = requests.post(url, json=payload, timeout=12)
-#             if resp.status_code == 200:
-#                 j = resp.json()
-#                 send(
-#                     "Ro'yxatdan o'tdingiz ✅\n"
-#                     f"ID: <code>{j['id']}</code>\n"
-#                     f"Parol: <code>{j['password']}</code>"
-#                 )
-#             else:
-#                 send(f"Xatolik: {resp.text}")
-#         except Exception as e:
-#             send(f"Server bilan ulanishda xatolik: {e}")
+        url = f"{settings.BACKEND_BASE_URL}/accounts/boss/register/"
+        try:
+            resp = requests.post(url, json=payload, timeout=12)
+            if resp.status_code == 200:
+                j = resp.json()
+                send(
+                    "Ro'yxatdan o'tdingiz ✅\n"
+                    f"ID: <code>{j['id']}</code>\n"
+                    f"Parol: <code>{j['password']}</code>"
+                )
+            else:
+                send(f"Xatolik: {resp.text}")
+        except Exception as e:
+            send(f"Server bilan ulanishda xatolik: {e}")
 
-#         return JsonResponse({"ok": True})
+        return JsonResponse({"ok": True})
     
-#     return JsonResponse({"ok": True, "created": True, "id": chat_id, "probe": "register_boss_api_v3"})
+    return JsonResponse({"ok": True, "created": True, "id": chat_id, "probe": "register_boss_api_v3"})
 
 
 WEEKDAY_UZ_ABBR = ["du", "se", "ch", "pa", "ju", "sh", "ya"]
@@ -1032,88 +1088,18 @@ def _t(lang: str, key: str) -> str:
     lang = lang if lang in {"uz","uz_lat","ru","en"} else "uz"
     return _AUTH_MSG[key][lang]
 
+
 @csrf_exempt
-def boss_login(request):
-    """
-    POST /accounts/boss/login/
-    Body: { "boss_user_id": <int>, "password": "<str>" }
-    """
-    # 1) Кирувчи JSON
-    try:
-        data = json.loads((request.body or b"").decode("utf-8") or "{}")
-    except Exception:
-        data = {}
-    raw_id = data.get("boss_user_id")
-    raw_pw = data.get("password")
-
-    # Кирувчи валидация
-    if raw_id is None or not raw_pw:
-        audit_log("Кириш муваффақиятсиз", request, actor_id=None, status=400,
-                  meta={"reason": "bad_input"})
-        return JsonResponse({"detail": "ID ва парол талаб қилинади."},
-                            status=400, json_dumps_params={"ensure_ascii": False})
+def telegram_aiogram_webhook(request: HttpRequest):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST allowed"}, status=405)
 
     try:
-        chat_id = int(str(raw_id).strip())
-    except Exception:
-        audit_log("Кириш муваффақиятсиз", request, actor_id=None, status=400,
-                  meta={"reason": "bad_id_format", "raw_id": raw_id})
-        return JsonResponse({"detail": "ID нотўғри форматда."},
-                            status=400, json_dumps_params={"ensure_ascii": False})
+        body = request.body.decode("utf-8")
+        update = Update.model_validate_json(body)  # ✅ types.Update emas
+    except Exception as e:
+        return JsonResponse({"error": f"Invalid update: {e}"}, status=400)
 
-    # 2) Фойдаланувчини олиш
-    with connection.cursor() as cur:
-        cur.execute(
-            "SELECT id, name, COALESCE(lang,'uz'), password "
-            "FROM public.accounts_business WHERE id=%s LIMIT 1",
-            [chat_id],
-        )
-        row = cur.fetchone()
-
-    if not row:
-        # user enumeration’ни олдини олиш учун 401
-        audit_log("Кириш муваффақиятсиз", request, actor_id=chat_id, status=401,
-                  meta={"reason": "user_not_found"})
-        return JsonResponse({"detail": "ID ёки парол нотўғри."},
-                            status=401, json_dumps_params={"ensure_ascii": False})
-
-    _id, name, lang, hashed = row
-
-    # 3) Паролни текшириш
-    if not (hashed and check_password(raw_pw, hashed)):
-        audit_log("Кириш муваффақиятсиз", request, actor_id=chat_id, status=401,
-                  meta={"reason": "bad_password"})
-        return JsonResponse({"detail": "ID ёки парол нотўғри."},
-                            status=401, json_dumps_params={"ensure_ascii": False})
-
-    # 4) Охирги фаол вақтни янгилаш (last_seen_at бор бўлса шуни, бўлмаса created_at’ни)
-    now = timezone.now()
-    with connection.cursor() as cur:
-        cur.execute("""
-            DO $$
-            BEGIN
-              IF EXISTS (
-                SELECT 1 FROM information_schema.columns
-                WHERE table_schema='public' AND table_name='accounts_business' AND column_name='last_seen_at'
-              ) THEN
-                UPDATE public.accounts_business SET last_seen_at = %s WHERE id = %s;
-              ELSE
-                UPDATE public.accounts_business SET created_at = %s WHERE id = %s;
-              END IF;
-            END$$;
-        """, [now, chat_id, now, chat_id])
-
-    # 5) Муваффақият — аудит
-    audit_log("Кириш муваффақиятли", request, actor_id=chat_id, status=200)
-
-    return JsonResponse(
-        {
-            "ok": True,
-            "detail": "Муваффақиятли кирдингиз.",
-            "id": chat_id,
-            "name": name,
-            "lang": lang,
-            "last_active_at": now.isoformat(),
-        },
-        json_dumps_params={"ensure_ascii": False}
-    )
+    # ✅ Django sync → Aiogram async
+    async_to_sync(dp.feed_update)(bot, update)
+    return JsonResponse({"ok": True})

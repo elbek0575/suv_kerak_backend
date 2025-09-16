@@ -133,8 +133,7 @@ def create_buyurtma(request):
         return JsonResponse({"detail": "Сув сони 1 дан катта бўлсин."}, status=400)
     if lat_in is None or lng_in is None:
         return JsonResponse({"detail": "lat/lng талаб қилинади."}, status=400)
-    if not manzil:
-        return JsonResponse({"detail": "Буюртма манзили талаб қилинади."}, status=400)
+    
 
     try:
         lat = Decimal(str(lat_in)); lng = Decimal(str(lng_in))
