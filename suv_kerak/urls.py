@@ -38,12 +38,15 @@ def switch_language(request, code):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("finance/", include("finance.urls")),
-    path("i18n/", include("django.conf.urls.i18n")),  # POST /i18n/setlang/
-    path("lang/", lang_page, name="lang_page"),       # форма саҳифаси
-    path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz    
+    path("i18n/", include("django.conf.urls.i18n")),
+    path("lang/", lang_page, name="lang_page"),
+    path("lang/<str:code>/", switch_language, name="switch_language"),
+
     path("accounts/", include("accounts.urls")),
-    path('orders/', include('orders.urls')),
-    path("aiogram-bot-webhook/", aiogram_webhook_view, name="aiogram_webhook"),
-    path("bots/", include("bots.urls")),
+    path("orders/", include("orders.urls")),
+
+    # Бот URL’лари – фақат шу ерда
+    path("bots/", include(("bots.urls", "bots"), namespace="bots")),
 ]
+
 
