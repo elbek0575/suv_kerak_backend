@@ -813,67 +813,79 @@ def _forgot_password_text(lang: str, password: str) -> str:
 def forgot_boss_password_start(request):
     """
     Body: { "id": <int> }  ёки  { "boss_tel_num": "<str>" } (alias: "phone")
+    Query: ?id=... ёки ?boss_tel_num=... ҳам ишлайди.
     """
+    # --- Robust parsing ---
+    raw_text = (request.body or b"").decode("utf-8", errors="ignore")
+    data = {}
     try:
-        data = json.loads((request.body or b"").decode("utf-8") or "{}")
+        data = json.loads(raw_text) if raw_text.strip() else {}
     except Exception:
-        data = {}
+        # JSON бўлмаса, POST формадан оламиз
+        pass
+    # Форм-датадан ҳам ўқиб қўямиз (JSON келмаган бўлса)
+    if not data and request.POST:
+        data = request.POST.dict()
 
     raw_id    = data.get("id") or request.GET.get("id")
-    raw_phone = data.get("boss_tel_num") or data.get("phone") \
-             or request.GET.get("boss_tel_num") or request.GET.get("phone")
+    raw_phone = (
+        data.get("boss_tel_num") or data.get("phone")
+        or request.GET.get("boss_tel_num") or request.GET.get("phone")
+    )
 
     chat_id = None
     lang = "uz"
     boss_phone = ""
+
+    if not (raw_id or raw_phone):
+        audit_log("fp_start_fail", request, actor_id=None, status=400,
+                  meta={"reason": "id_or_phone_required", "raw_preview": raw_text[:512]})
+        return JsonResponse({"detail": "id ёки boss_tel_num талаб қилинади."}, status=400)
 
     with connection.cursor() as cur:
         if raw_id:
             try:
                 chat_id = int(str(raw_id).strip())
             except Exception:
-                # ❗️АУДИТ: нотўғри ID формати
                 audit_log("fp_start_fail", request, actor_id=None, status=400,
                           meta={"reason": "bad_id_format", "raw_id": raw_id})
                 return JsonResponse({"detail": "id нотўғри форматда."}, status=400)
 
+            # Eslatma: бу ерда id — business.id (Telegram chat_id эмас!)
             cur.execute(
-                "SELECT id, COALESCE(lang,'uz'), COALESCE(boss_tel_num,'') "
-                "FROM public.accounts_business WHERE id=%s LIMIT 1", [chat_id]
+                """
+                SELECT id, COALESCE(lang,'uz'), COALESCE(boss_tel_num,'')
+                FROM public.accounts_business WHERE id=%s LIMIT 1
+                """,
+                [chat_id]
             )
             row = cur.fetchone()
             if not row:
-                # ❗️АУДИТ: фойдаланувчи топилмади
                 audit_log("fp_start_fail", request, actor_id=chat_id, status=404,
                           meta={"reason": "user_not_found_by_id"})
                 return JsonResponse({"detail": "Фойдаланувчи топилмади."}, status=404)
             chat_id, lang, boss_phone = row
 
-        elif raw_phone:
+        else:
             phone = _normalize_phone(raw_phone) if "_normalize_phone" in globals() \
                     else _normalize_phone_fallback(raw_phone)
-
             cur.execute(
-                "SELECT id, COALESCE(lang,'uz'), COALESCE(boss_tel_num,'') "
-                "FROM public.accounts_business WHERE boss_tel_num=%s", [phone]
+                """
+                SELECT id, COALESCE(lang,'uz'), COALESCE(boss_tel_num,'')
+                FROM public.accounts_business WHERE boss_tel_num=%s
+                """,
+                [phone]
             )
             rows = cur.fetchall()
             if not rows:
-                # ❗️АУДИТ: телефон бўйича топилмади
                 audit_log("fp_start_fail", request, actor_id=None, status=404,
                           meta={"reason": "user_not_found_by_phone", "phone": phone})
                 return JsonResponse({"detail": "Ушбу телефон бўйича ҳисоб топилмади."}, status=404)
             if len(rows) > 1:
-                # ❗️АУДИТ: бир телефонга бир нечта аккаунт
                 audit_log("fp_start_fail", request, actor_id=None, status=409,
                           meta={"reason": "multiple_accounts_for_phone", "phone": phone})
                 return JsonResponse({"detail": "Бу телефонга бир нечта ҳисоб бор. Илтимос ID киритинг."}, status=409)
-            chat_id, lang, boss_phone = rows[0]
-        else:
-            # ❗️АУДИТ: параметрлар етишмайди
-            audit_log("fp_start_fail", request, actor_id=None, status=400,
-                      meta={"reason": "id_or_phone_required"})
-            return JsonResponse({"detail": "id ёки boss_tel_num талаб қилинади."}, status=400)
+            chat_id, lang, boss_phone = rows[0]       
 
     # 4 хонали код
     code = "".join(secrets.choice(string.digits) for _ in range(4))
