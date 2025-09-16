@@ -1,8 +1,7 @@
 # accounts/urls.py
-from django.urls import path
+from django.urls import re_path
 from .views import boss_login
 
 urlpatterns = [       
-    path("boss/login/", boss_login, name="boss_login"),
-    
+    re_path(r"^boss/login/?$", boss_login, name="boss_login"),   
 ]
