@@ -20,7 +20,7 @@ from django.urls import path, include
 from django.shortcuts import render, redirect
 from django.conf import settings
 from django.utils import translation
-from bots.suv_kerak_bot import telegram_aiogram_webhook
+from bots.suv_kerak_bot import aiogram_webhook_view
 
 def lang_page(request):
     return render(request, "lang.html")   # templates/lang.html
@@ -43,6 +43,6 @@ urlpatterns = [
     path("lang/<str:code>/", switch_language, name="switch_language"),  # GET: /lang/uz    
     path("accounts/", include("accounts.urls")),
     path('orders/', include('orders.urls')),
-    path("aiogram-bot-webhook/", telegram_aiogram_webhook, name="tg_webhook_alias"),
+    path("aiogram-bot-webhook/", aiogram_webhook_view, name="tg_webhook_alias"),
 ]
 

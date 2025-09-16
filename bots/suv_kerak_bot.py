@@ -38,7 +38,7 @@ bot = Bot(
 dp = Dispatcher()
 
 # 📍 Геолокацияга жавоб бериш (v3)
-@dp.message(F.content_type.in_({ContentType.LOCATION, ContentType.VENUE}))  # yoki: @dp.message(lambda m: m.location is not None)
+@dp.message(F.content_type == ContentType.LOCATION)  # yoki: @dp.message(lambda m: m.location is not None)
 async def handle_location(message: Message):
     lat = message.location.latitude
     lng = message.location.longitude
@@ -1089,17 +1089,41 @@ def _t(lang: str, key: str) -> str:
     return _AUTH_MSG[key][lang]
 
 
+# @csrf_exempt
+# def telegram_aiogram_webhook(request: HttpRequest):
+#     if request.method != "POST":
+#         return JsonResponse({"error": "Only POST allowed"}, status=405)
+
+#     try:
+#         body = request.body.decode("utf-8")
+#         update = Update.model_validate_json(body)  # ✅ types.Update emas
+#     except Exception as e:
+#         return JsonResponse({"error": f"Invalid update: {e}"}, status=400)
+
+#     # ✅ Django sync → Aiogram async
+#     async_to_sync(dp.feed_update)(bot, update)
+#     return JsonResponse({"ok": True})
+
+
 @csrf_exempt
-def telegram_aiogram_webhook(request: HttpRequest):
+def aiogram_webhook_view(request):
     if request.method != "POST":
-        return JsonResponse({"error": "Only POST allowed"}, status=405)
+        return HttpResponseNotAllowed(["POST"])
+    try:
+        # 1) Parse Update (aiogram v3, pydantic v2)
+        payload = request.body.decode("utf-8")
+        update = Update.model_validate_json(payload)
+    except Exception:
+        logging.exception("❌ Telegram update parse failed")
+        # Telegram қайта уриниши учун барибир 200 қайтарамиз
+        return JsonResponse({"ok": True})
 
     try:
-        body = request.body.decode("utf-8")
-        update = Update.model_validate_json(body)  # ✅ types.Update emas
-    except Exception as e:
-        return JsonResponse({"error": f"Invalid update: {e}"}, status=400)
+        # 2) Feed update (async -> sync)
+        async_to_sync(dp.feed_update)(bot, update)
+    except Exception:
+        logging.exception("❌ dp.feed_update failed")
+        # Барибир 200, акс ҳолда Telegram қайта-қайта уради
+        return JsonResponse({"ok": True})
 
-    # ✅ Django sync → Aiogram async
-    async_to_sync(dp.feed_update)(bot, update)
     return JsonResponse({"ok": True})
