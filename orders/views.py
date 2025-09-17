@@ -13,6 +13,7 @@ from accounts.models import Business
 from .models import Buyurtma
 from decimal import Decimal, InvalidOperation
 import os, requests
+import re
 
 # Боссни асосий менюсида статискик маълумотларни кайтарувчи эндпоент
 @require_GET
