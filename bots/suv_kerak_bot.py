@@ -39,7 +39,7 @@ bot = Bot(
 )
 dp = Dispatcher()
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("bots")
 
 # 📍 Геолокацияга жавоб бериш (v3)
 @dp.message(F.content_type == ContentType.LOCATION)  # yoki: @dp.message(lambda m: m.location is not None)
@@ -50,14 +50,18 @@ async def handle_location(message: Message):
 
     # 1-уриниш: reply
     try:
+        logger.info("📍 reply() билан юборишга уринаяпман.")
         await message.reply(text)
+        logger.info("✅ reply() муваффақиятли юборилди.")
     except TelegramBadRequest as e:
-        # "message to be replied not found" ва шунга ўхшаш хатоларда fallback
-        logging.exception("sendMessage failed, reply javob bukdi.")
+        # Эҳтимолий хатолар: "message to be replied not found" ва ҳ.к.
+        # ❗️WARNING ёки INFO — ERROR эмас
+        logger.warning("⚠️ reply() хатоси, fallback answer() (%s)", e, exc_info=False)
         await message.answer(text)
-    except Exception:
-        # ҳар қандай кутилмаган хатода ҳам fallback
-        logging.exception("sendMessage failed? replysiz javob buldi.")
+        logger.info("✅ answer() билан юборилди. (fallback)")
+    except Exception as e:
+        # Ноодатий хатолар — барибир ERROR ёзмоқчи бўлмасангиз:
+        logger.warning("⚠️ Кутилмаган хатолик, answer()га ўтдим: %s", e, exc_info=True)
         await message.answer(text)
         
 # 🔧 AIOHTTP сервер

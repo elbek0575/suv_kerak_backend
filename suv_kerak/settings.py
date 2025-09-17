@@ -78,17 +78,36 @@ INSTALLED_APPS = [
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+
     "formatters": {
-        "jsonline": {
-            "format": "%(message)s"  # biz middleware'da allaqachon JSON string yollaymiz
-        },
+        # middleware allaqachon JSON string beradi → faqat message'ni chiqaramiz
+        "jsonline": {"format": "%(message)s"},
     },
+
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "jsonline"},
     },
+
     "loggers": {
-        "access": {"handlers": ["console"], "level": "INFO", "propagate": False},  # 👈
+        # Sizdagi mavjud access logger
+        "access":  {"handlers": ["console"], "level": "INFO", "propagate": False},
+
+        # 👉 бот/вебхук логлари шу ерга тушади
+        "bots":    {"handlers": ["console"], "level": "INFO", "propagate": False},
+
+        # (ихтиёрий) Aiogram логларини ҳам JSON’га буриш
+        "aiogram":               {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "aiogram.dispatcher":    {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "aiogram.bot.api":       {"handlers": ["console"], "level": "INFO", "propagate": False},
+
+        # Django’нинг ортиқча трассаларини пасайтириш
+        "django":            {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "django.server":     {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "django.request":    {"handlers": ["console"], "level": "WARNING", "propagate": False},
     },
+
+    # Root logger'ни қаттиқ қилиб қўямиз — фақат ERROR↑ қолсин (ёки умуман CRITICAL ҳам бўлади)
+    "root": {"handlers": ["console"], "level": "ERROR"},
 }
 
 

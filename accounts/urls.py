@@ -4,6 +4,5 @@ from .views import boss_login
 from bots.suv_kerak_bot import aiogram_webhook_view
 
 urlpatterns = [       
-    re_path(r"^boss/login/?$", boss_login, name="boss_login"),
-    path("aiogram-bot-webhook/", aiogram_webhook_view, name="aiogram_webhook"),   
+    re_path(r"^boss/login/?$", boss_login, name="boss_login"),    
 ]
