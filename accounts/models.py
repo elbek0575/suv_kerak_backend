@@ -6,8 +6,6 @@ from django.conf import settings
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-
-# accounts/models.py
 from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
@@ -161,13 +159,25 @@ class GeoList(models.Model):
     """
     public.geo_list
     """
+    id = models.BigAutoField(primary_key=True)  # int8 (bigserial)
     viloyat = models.CharField(max_length=80, db_index=True)
     shaxar_yoki_tuman_nomi = models.CharField(max_length=120, db_index=True)
+
     SHAXAR_YOKI_TUMAN_CHOICES = (("шаҳар", "шаҳар"), ("туман", "туман"))
-    shaxar_yoki_tuman = models.CharField(max_length=10, choices=SHAXAR_YOKI_TUMAN_CHOICES, db_index=True)
+    shaxar_yoki_tuman = models.CharField(
+        max_length=10, choices=SHAXAR_YOKI_TUMAN_CHOICES, db_index=True
+    )
+
+    # 🔽 Скринга мос янги устунлар
+    center_lat = models.FloatField(null=True, blank=True)              # float8
+    center_lng = models.FloatField(null=True, blank=True)              # float8
+    radius_km  = models.FloatField(default=20, null=True, blank=True)  # float8, default 20
+    # boundary   = gis_models.MultiPolygonField(srid=4326, null=True, blank=True)
+    # public.geometry(MultiPolygon, 4326)
 
     class Meta:
-        db_table = "geo_list"  # public.geo_list
+        db_table = "geo_list"
+        managed  = False
         verbose_name = "Гео (шаҳар/туман)"
         verbose_name_plural = "Гео (шаҳар/туман)"
         indexes = [
@@ -182,10 +192,11 @@ class GeoList(models.Model):
                 name="uq_geo_viloyat_nomi_turi",
             )
         ]
+        # MultiPolygonField учун PostGIS spatial index (GIST) default равишда яратилади.
 
     def __str__(self):
         return f"{self.viloyat} — {self.shaxar_yoki_tuman_nomi} ({self.shaxar_yoki_tuman})"
-
+    
 
 METHOD_CHOICES = [("GET","GET"), ("POST","POST"), ("PUT","PUT"), ("PATCH","PATCH"), ("DELETE","DELETE")]
 ACTION_CHOICES = [

@@ -94,6 +94,7 @@ LOGGING = {
 
         # 👉 бот/вебхук логлари шу ерга тушади
         "bots":    {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "orders":    {"handlers": ["console"], "level": "INFO", "propagate": False},
 
         # (ихтиёрий) Aiogram логларини ҳам JSON’га буриш
         "aiogram":               {"handlers": ["console"], "level": "INFO", "propagate": False},

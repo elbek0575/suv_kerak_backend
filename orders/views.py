@@ -14,6 +14,10 @@ from .models import Buyurtma
 from decimal import Decimal, InvalidOperation
 import os, requests
 import re
+import logging
+
+
+logger = logging.getLogger("orders")
 
 # Боссни асосий менюсида статискик маълумотларни кайтарувчи эндпоент
 @require_GET
@@ -84,62 +88,128 @@ def _default_pay_status() -> str:
     allowed = {c[0] for c in Buyurtma.PAY_STATUS}
     return "pend_pay" if "pend_pay" in allowed else "none"
 
-def _extract_lat_lng(data: dict):
+def _extract_lat_lng(data: dict | str):
     """
     Lat/Lng’ни турли форматдан ўқиб беради.
-    Qo'llab-quvvatlaydi:
-      1) {"lat": 38.83, "lng": 65.76}
-      2) {"lat": "38.83", "lng": "65.76"}
-      3) {"lat": "38.83, 65.76"}  # bitta qatorda
-      4) {"coords": "38.83,65.76"} yoki {"location": "38.83 65.76"} ва ҳ.к.
+    Қўллаб-quvvatlayди:
+      1) {"lat": 39.041069, "lng": 65.584425}
+      2) {"coords": "39.041069, 65.584425"}  # ёки: "latlng", "location", "point", "geo", "coord"
+      3) Бутун боди бир қатор матн бўлса: "39.041069, 65.584425"
+    Қайтаради: (lat, lng) | (None, None)
     """
-    lat = data.get("lat")
-    lng = data.get("lng")
-    if lat is not None and lng is not None:
-        return lat, lng
+    # 1) Оддий майдонлар
+    if isinstance(data, dict):
+        lat = data.get("lat") or data.get("latitude")
+        lng = data.get("lng") or data.get("lon") or data.get("long") or data.get("longitude")
+        if lat is not None and lng is not None:
+            try:
+                return float(lat), float(lng)
+            except Exception:
+                pass
 
-    # Бир қаторли турли калитлар
-    combo = (
-        data.get("coords") or data.get("coord") or data.get("latlng") or
-        data.get("location") or data.get("geo") or data.get("geopoint")
+        # 2) Бир қаторли вариантни излаш
+        for k in ("coords", "latlng", "location", "point", "geo", "coord"):
+            if k in data and data[k]:
+                line = str(data[k])
+                break
+        else:
+            line = None
+    else:
+        # JSON эмас, бутун боди — матн бўлган ҳолат
+        line = str(data or "")
+
+    if line:
+        # "39.041069, 65.584425" каби: лат, лонг (қавс/бўшлиқ/қўшимча белгиларга чидамли)
+        m = re.search(r'(-?\d+(?:\.\d+)?)\s*[,;]\s*(-?\d+(?:\.\d+)?)', line)
+        if m:
+            lat_s, lng_s = m.group(1), m.group(2)
+            try:
+                return float(lat_s), float(lng_s)
+            except Exception:
+                pass
+
+    return None, None
+
+# ------------------------------
+# Бизнесс ҳудудни текшириш (PostGIS)
+# ------------------------------
+def _within_business_area(business_id: int, lat: float, lng: float) -> bool:
+    # Business’dan viloyat’ни оламиз
+    viloyat = Business.objects.filter(id=business_id).values_list("viloyat", flat=True).first()
+    if not viloyat:
+        print(f"[AREA] business_id={business_id} uchun viloyat topilmadi")
+        return False
+
+    # 1) Энг яқин марказгача масофани ҳисоблаш (метрда), кейин кмга айлантирамиз
+    sql = """
+    SELECT
+      g.shaxar_yoki_tuman_nomi,
+      g.radius_km,
+      ST_Distance(
+        g.center_geog,
+        ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography
+      ) AS dist_m
+    FROM public.geo_list g
+    WHERE g.viloyat = %s
+    ORDER BY dist_m ASC
+    LIMIT 1;
+    """
+
+    with connection.cursor() as cur:
+        # Eslatma: MakePoint(lng, lat)
+        cur.execute(sql, [float(lng), float(lat), viloyat])
+        row = cur.fetchone()
+
+    if not row:
+        print(f"[AREA] viloyat='{viloyat}' uchun geo_list topilmadi")
+        return False
+
+    name, radius_km, dist_m = row
+    dist_km = float(dist_m) / 1000.0
+    radius_km = float(radius_km or 0)
+    ok = dist_km <= radius_km
+
+    # 🔎 Консолга дебаг чиқиши:
+    print(
+        f"[AREA] biz_id={business_id} viloyat={viloyat} "
+        f"target=({lat:.6f},{lng:.6f}) nearest='{name}' "
+        f"dist_km={dist_km:.3f} radius_km={radius_km:.0f} => ok={ok}"
     )
 
-    # Агар combo йўқ бўлса, лекин lat ичида икки сон бўлса — шуни парс қиламиз
-    if combo is None and isinstance(lat, str) and ("," in lat or " " in lat):
-        combo = lat
+    return ok
 
-    if combo:
-        s = str(combo)
-        # Матндан биринчи иккита сонни оламиз (минус/плюс ва нуқтали сонларни ҳам)
-        nums = re.findall(r"[-+]?\d+(?:\.\d+)?", s)
-        if len(nums) >= 2:
-            return nums[0], nums[1]
-
-    return lat, lng
-
-# Босс фойдаланувчи буюртма яратиш функцияси
+# ------------------------------
+# Буюртма яратиш
+# ------------------------------
 @csrf_exempt
 @require_POST
 def create_buyurtma(request):
-    """
-    Кириш:
-      - business_id: int (шарт)
-      - client_tg_id: int | str (ихтиёрий)
-      - client_tel_num: str (шарт)
-      - suv_soni: int (>0) (шарт)
-      - lat: float (шарт)
-      - lng: float (шарт)
-      - manzil: str (шарт) ✅
-      - location_accuracy, location_source (ихтиёрий)
-    Чиқиш: яратилган буюртма маълумоти
-    """
     # 1) Payload
     if request.content_type and "application/json" in request.content_type.lower():
         data = json.loads((request.body or b"").decode("utf-8") or "{}")
     else:
         data = request.POST.dict()
 
-    # 2) Мажбурий майдонлар
+    # 2) Локализация хабарлари ва тил
+    _msg = {
+        "out_of_area": {
+            "uz":     "Юборилган локация фаолият юритиш ҳудудидан ташқарида. Локация нотўғри.",
+            "uz_lat": "Yuborilgan lokatsiya faoliyat yuritish hududidan tashqarida. Lokatsiya noto‘g‘ri.",
+            "ru":     "Отправленная локация вне зоны деятельности. Некорректная локация.",
+            "en":     "The sent location is outside the service area. Invalid location.",
+        },
+        "check_failed": {
+            "uz":     "Локацияни текширишда носозлик. Кейинроқ яна уриниб кўринг.",
+            "uz_lat": "Lokatsiyani tekshirishda nosozlik. Keyinroq yana urinib ko‘ring.",
+            "ru":     "Сбой при проверке локации. Попробуйте позже.",
+            "en":     "Failed to verify location. Please try again later.",
+        },
+    }
+    lang = (str(data.get("lang") or "уз")).lower()
+    if lang not in {"uz", "uz_lat", "ru", "en"}:
+        lang = "uz"
+
+    # 3) Мажбурий майдонлар
     try:
         business_id = int(data.get("business_id") or 0)
     except ValueError:
@@ -152,13 +222,14 @@ def create_buyurtma(request):
     except ValueError:
         suv_soni = 0
 
-    # --- Yangi: lat/lng’ни турли форматдан ўқиш ---
-    lat_in, lng_in = _extract_lat_lng(data)
-    acc = data.get("location_accuracy")
-    src = (data.get("location_source") or "manual").lower()
-    manzil = (data.get("manzil") or "").strip()
-
-    # 3) Валидация
+    # 4) Координата парс
+    lat_in, lng_in = _extract_lat_lng(data)    
+    try:
+        lat_f = float(lat_in); lng_f = float(lng_in)
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "lat/lng формат нотўғри."}, status=400)
+  
+    # 5) Асосий валидациялар
     if not business_id:
         return JsonResponse({"detail": "business_id талаб қилинади."}, status=400)
     if not client_tel_num:
@@ -167,10 +238,18 @@ def create_buyurtma(request):
         return JsonResponse({"detail": "Сув сони 1 дан катта бўлсин."}, status=400)
     if lat_in is None or lng_in is None:
         return JsonResponse({"detail": "lat/lng координаталари талаб қилинади."}, status=400)
-    
 
+    # 6) Хизмат ҳудуди текшируви (бир марта)
     try:
-        lat = Decimal(str(lat_in)); lng = Decimal(str(lng_in))
+        ok = _within_business_area(business_id, lat_f, lng_f)
+    except Exception:
+        return JsonResponse({"detail": _msg["check_failed"][lang]}, status=500)
+    if not ok:
+        return JsonResponse({"detail": _msg["out_of_area"][lang]}, status=400)
+
+    # 7) Диапазон ва Decimal га конверт (сақлаш учун)
+    try:
+        lat = Decimal(str(lat_f)); lng = Decimal(str(lng_f))
     except InvalidOperation:
         return JsonResponse({"detail": "lat/lng формат нотўғри."}, status=400)
     if not (-90 <= lat <= 90 and -180 <= lng <= 180):
@@ -179,20 +258,19 @@ def create_buyurtma(request):
     if not Business.objects.filter(id=business_id).exists():
         return JsonResponse({"detail": "Бундай business_id мавжуд эмас."}, status=404)
 
-    # 4) Сана/вақт
-    now = timezone.now()
-    now_uz = timezone.localtime(now, UZ_TZ) if UZ_TZ else timezone.localtime(now)
-    sana = now_uz.date()
-    vaqt = now_uz.time().replace(microsecond=0)
+    # 8) Қолган майдонлар
+    acc = data.get("location_accuracy")
+    src = (data.get("location_source") or "manual").lower()
+    manzil = (data.get("manzil") or "").strip()
 
-    # 5) Сақлаш
+    now_uz = timezone.localtime(timezone.now())
     obj = Buyurtma.objects.create(
         business_id=business_id,
-        sana=sana, vaqt=vaqt,
+        sana=now_uz.date(), vaqt=now_uz.time().replace(microsecond=0),
         client_tg_id=(int(client_tg_id) if str(client_tg_id).isdigit() else None),
         client_tel_num=client_tel_num,
         suv_soni=suv_soni,
-        manzil=manzil,  # ✅ Аниқланган эмас, фойдаланувчи берган
+        manzil=manzil,
         buyurtma_statusi="pending",
         pay_status=_default_pay_status(),
         lat=lat, lng=lng,
@@ -208,38 +286,5 @@ def create_buyurtma(request):
         "sana": str(obj.sana),
         "vaqt": str(obj.vaqt),
         "manzil": obj.manzil,
-        "coords": {
-            "lat": float(obj.lat),
-            "lng": float(obj.lng),
-            "source": obj.location_source,
-            "accuracy": obj.location_accuracy,
-        }
+        "coords": {"lat": float(lat), "lng": float(lng), "source": obj.location_source, "accuracy": obj.location_accuracy}
     }, status=201)
-    
-    
-def reverse_geocode(lat: Decimal, lng: Decimal) -> str | None:
-    """Lat/Lng -> манзил. Аввал Google, бўлмаса OSM Nominatim."""
-    # 1) Google Geocoding
-    key = os.getenv("GOOGLE_MAPS_KEY")
-    if key:
-        r = requests.get(
-            "https://maps.googleapis.com/maps/api/geocode/json",
-            params={"latlng": f"{lat},{lng}", "key": key, "language": "uz"},
-            timeout=6,
-        )
-        js = r.json()
-        if js.get("status") == "OK" and js.get("results"):
-            return js["results"][0]["formatted_address"]
-
-    # 2) OSM Nominatim (fallback)
-    r = requests.get(
-        "https://nominatim.openstreetmap.org/reverse",
-        params={"lat": float(lat), "lon": float(lng), "format": "jsonv2", "accept-language": "uz"},
-        headers={"User-Agent": "suv-kerak/1.0"},
-        timeout=6,
-    )
-    if r.ok:
-        jj = r.json()
-        return jj.get("display_name")
-    return None
-
