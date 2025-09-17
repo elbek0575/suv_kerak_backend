@@ -83,6 +83,39 @@ def _default_pay_status() -> str:
     allowed = {c[0] for c in Buyurtma.PAY_STATUS}
     return "pend_pay" if "pend_pay" in allowed else "none"
 
+def _extract_lat_lng(data: dict):
+    """
+    Lat/Lng’ни турли форматдан ўқиб беради.
+    Qo'llab-quvvatlaydi:
+      1) {"lat": 38.83, "lng": 65.76}
+      2) {"lat": "38.83", "lng": "65.76"}
+      3) {"lat": "38.83, 65.76"}  # bitta qatorda
+      4) {"coords": "38.83,65.76"} yoki {"location": "38.83 65.76"} ва ҳ.к.
+    """
+    lat = data.get("lat")
+    lng = data.get("lng")
+    if lat is not None and lng is not None:
+        return lat, lng
+
+    # Бир қаторли турли калитлар
+    combo = (
+        data.get("coords") or data.get("coord") or data.get("latlng") or
+        data.get("location") or data.get("geo") or data.get("geopoint")
+    )
+
+    # Агар combo йўқ бўлса, лекин lat ичида икки сон бўлса — шуни парс қиламиз
+    if combo is None and isinstance(lat, str) and ("," in lat or " " in lat):
+        combo = lat
+
+    if combo:
+        s = str(combo)
+        # Матндан биринчи иккита сонни оламиз (минус/плюс ва нуқтали сонларни ҳам)
+        nums = re.findall(r"[-+]?\d+(?:\.\d+)?", s)
+        if len(nums) >= 2:
+            return nums[0], nums[1]
+
+    return lat, lng
+
 # Босс фойдаланувчи буюртма яратиш функцияси
 @csrf_exempt
 @require_POST
@@ -101,7 +134,7 @@ def create_buyurtma(request):
     """
     # 1) Payload
     if request.content_type and "application/json" in request.content_type.lower():
-        data = json.loads(request.body.decode("utf-8") or "{}")
+        data = json.loads((request.body or b"").decode("utf-8") or "{}")
     else:
         data = request.POST.dict()
 
@@ -118,11 +151,11 @@ def create_buyurtma(request):
     except ValueError:
         suv_soni = 0
 
-    lat_in = data.get("lat")
-    lng_in = data.get("lng")
+    # --- Yangi: lat/lng’ни турли форматдан ўқиш ---
+    lat_in, lng_in = _extract_lat_lng(data)
     acc = data.get("location_accuracy")
     src = (data.get("location_source") or "manual").lower()
-    manzil = (data.get("manzil") or "").strip()  # ✅ ЯНГИ ҚЎШИЛДИ
+    manzil = (data.get("manzil") or "").strip()
 
     # 3) Валидация
     if not business_id:
@@ -132,7 +165,7 @@ def create_buyurtma(request):
     if suv_soni <= 0:
         return JsonResponse({"detail": "Сув сони 1 дан катта бўлсин."}, status=400)
     if lat_in is None or lng_in is None:
-        return JsonResponse({"detail": "lat/lng талаб қилинади."}, status=400)
+        return JsonResponse({"detail": "lat/lng координаталари талаб қилинади."}, status=400)
     
 
     try:
@@ -140,7 +173,7 @@ def create_buyurtma(request):
     except InvalidOperation:
         return JsonResponse({"detail": "lat/lng формат нотўғри."}, status=400)
     if not (-90 <= lat <= 90 and -180 <= lng <= 180):
-        return JsonResponse({"detail": "lat/lng диапазони нотўғри."}, status=400)
+        return JsonResponse({"detail": "lat/lng кординаталар диапазони нотўғри."}, status=400)
 
     if not Business.objects.filter(id=business_id).exists():
         return JsonResponse({"detail": "Бундай business_id мавжуд эмас."}, status=404)

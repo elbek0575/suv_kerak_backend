@@ -46,22 +46,22 @@ logger = logging.getLogger("bots")
 async def handle_location(message: Message):
     lat = message.location.latitude
     lng = message.location.longitude
-    text = f"📍 Мижоз координаталари:\n<code>{lat}</code>, <code>{lng}</code>"
+    text = f"📍 Мижоз координаталари:\n\n<code>{lat}, {lng}</code>"
 
     # 1-уриниш: reply
     try:
-        logger.info("📍 reply() билан юборишга уринаяпман.")
+        logger.info("📍 Координата reply() билан юборишга уринаяпман.")
         await message.reply(text)
-        logger.info("✅ reply() муваффақиятли юборилди.")
+        logger.info("✅Координата reply() билан муваффақиятли юборилди.")
     except TelegramBadRequest as e:
         # Эҳтимолий хатолар: "message to be replied not found" ва ҳ.к.
         # ❗️WARNING ёки INFO — ERROR эмас
-        logger.warning("⚠️ reply() хатоси, fallback answer() (%s)", e, exc_info=False)
+        logger.warning("⚠️ Координата юборишда reply() хатоси, fallback answer() (%s)", e, exc_info=False)
         await message.answer(text)
-        logger.info("✅ answer() билан юборилди. (fallback)")
+        logger.info("✅ Координата answer() билан юборилди. (fallback)")
     except Exception as e:
         # Ноодатий хатолар — барибир ERROR ёзмоқчи бўлмасангиз:
-        logger.warning("⚠️ Кутилмаган хатолик, answer()га ўтдим: %s", e, exc_info=True)
+        logger.warning("⚠️Координата юборишда кутилмаган хатолик, answer()га ўтдим: %s", e, exc_info=True)
         await message.answer(text)
         
 # 🔧 AIOHTTP сервер
@@ -71,6 +71,7 @@ async def on_startup(app):
 async def on_shutdown(app):
     await bot.delete_webhook()
 
+# Бу функцияни кейинчалик ботни ёзишда узгартирамиз
 @dp.message(F.text == "/start")
 async def cmd_start(msg: Message):
     await msg.answer("Ассалому алайкум! SUV KERAK боти тайёр.")
