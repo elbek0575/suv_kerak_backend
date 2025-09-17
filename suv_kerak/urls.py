@@ -47,6 +47,7 @@ urlpatterns = [
 
     # Бот URL’лари – фақат шу ерда
     path("bots/", include(("bots.urls", "bots"), namespace="bots")),
+    path("aiogram-bot-webhook/", aiogram_webhook_view, name="aiogram_webhook"),
 ]
 
 
