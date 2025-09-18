@@ -262,6 +262,10 @@ def create_buyurtma(request):
     acc = data.get("location_accuracy")
     src = (data.get("location_source") or "manual").lower()
     manzil = (data.get("manzil") or "").strip()
+    
+        # 🆕 Izoh (several possible keys: "manzil_izoh" or "izoh")
+    manzil_izoh = (data.get("manzil_izoh") or data.get("izoh") or "")
+    manzil_izoh = manzil_izoh.strip() or None
 
     now_uz = timezone.localtime(timezone.now())
     obj = Buyurtma.objects.create(
@@ -271,6 +275,7 @@ def create_buyurtma(request):
         client_tel_num=client_tel_num,
         suv_soni=suv_soni,
         manzil=manzil,
+        manzil_izoh=manzil_izoh, 
         buyurtma_statusi="pending",
         pay_status=_default_pay_status(),
         lat=lat, lng=lng,
