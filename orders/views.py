@@ -3,7 +3,7 @@ from django.shortcuts import render
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
-from django.db import connection
+from django.db import transaction, connection, IntegrityError
 from datetime import date
 import json
 from datetime import datetime
@@ -129,6 +129,44 @@ def _extract_lat_lng(data: dict | str):
                 pass
 
     return None, None
+
+# --- 🆕 ORDER NUMBER GENERATOR ---
+def _format_segment(n: int, min_width: int = 2) -> str:
+    """
+    Сегментни камида 2 разрядгача 0 билан тўлдириб беради.
+    Агар сон 2 разряддан катта бўлса, ўз ҳолича қолади (масалан: 128 → "128").
+    """
+    s = str(int(n))
+    result = s.zfill(min_width) if len(s) < min_width else s
+    print(f"2 разрядли сигмент {result}")
+    return result
+
+def _next_order_num() -> str:
+    """
+    Йил/ой/кун бўйича жами буюртмалар сонидан келиб чиқиб `order_num` яратади.
+    База мутлақо бўш бўлса — "01-01-01".
+    Транзакцияда advisory lock ишлатилиб, бир пайтнинг ўзидаги сўровлар тўқнашмаслиги таъминланади.
+    """
+    now_uz = timezone.localtime(timezone.now())
+    today   = now_uz.date()
+    y_start = today.replace(month=1, day=1)
+    m_start = today.replace(day=1)
+
+    with transaction.atomic():
+        # Бир вақтда фақат битта воркер санаши учун: advisory lock
+        with connection.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ["buyurtma_order_num"])
+
+        total_all = Buyurtma.objects.all().only("id").count()
+        if total_all == 0:
+            return "01-01-01"
+
+        y_count = Buyurtma.objects.filter(sana__gte=y_start, sana__lte=today).only("id").count() + 1
+        m_count = Buyurtma.objects.filter(sana__gte=m_start, sana__lte=today).only("id").count() + 1
+        d_count = Buyurtma.objects.filter(sana=today).only("id").count() + 1
+
+        # Формат: YYYYcount-MONcount-DAYcount (минимум “02-02-02” каби)
+        return f"{_format_segment(y_count, 2)}-{_format_segment(m_count, 2)}-{_format_segment(d_count, 2)}"
 
 # ------------------------------
 # Бизнесс ҳудудни текшириш (PostGIS)
@@ -261,35 +299,62 @@ def create_buyurtma(request):
     # 8) Қолган майдонлар
     acc = data.get("location_accuracy")
     src = (data.get("location_source") or "manual").lower()
-    manzil = (data.get("manzil") or "").strip()
-    
+    manzil = (data.get("manzil") or "").strip()    
         # 🆕 Izoh (several possible keys: "manzil_izoh" or "izoh")
     manzil_izoh = (data.get("manzil_izoh") or data.get("izoh") or "")
     manzil_izoh = manzil_izoh.strip() or None
 
     now_uz = timezone.localtime(timezone.now())
-    obj = Buyurtma.objects.create(
-        business_id=business_id,
-        sana=now_uz.date(), vaqt=now_uz.time().replace(microsecond=0),
-        client_tg_id=(int(client_tg_id) if str(client_tg_id).isdigit() else None),
-        client_tel_num=client_tel_num,
-        suv_soni=suv_soni,
-        manzil=manzil,
-        manzil_izoh=manzil_izoh, 
-        buyurtma_statusi="pending",
-        pay_status=_default_pay_status(),
-        lat=lat, lng=lng,
-        location_accuracy=(int(acc) if acc else None),
-        location_source=src if src in {"tg", "manual", "geocode"} else "manual",
-    )
+    
+    attempt = 0
+    last_err = None
+    while attempt < 5:
+        attempt += 1
+        order_num = _next_order_num()
+        try:
+            with transaction.atomic():
+                obj = Buyurtma.objects.create(
+                    business_id=business_id,
+                    sana=now_uz.date(),
+                    vaqt=now_uz.time().replace(microsecond=0),
+                    client_tg_id=(int(client_tg_id) if str(client_tg_id).isdigit() else None),
+                    client_tel_num=client_tel_num,
+                    suv_soni=suv_soni,
+                    manzil=manzil,
+                    manzil_izoh=manzil_izoh,
+                    buyurtma_statusi="pending",
+                    pay_status=_default_pay_status(),
+                    lat=lat,
+                    lng=lng,
+                    location_accuracy=(int(acc) if acc else None),
+                    location_source=src if src in {"tg", "manual", "geocode"} else "manual",
+                    order_num=order_num,  # 🆕
+                )
+            break  # муваффақиятли яратилди
+        except IntegrityError as e:
+            # Масалан, order_num unique бузилса — яна бир марта уринамиз
+            last_err = e
+            continue
 
+    if attempt >= 5 and last_err:
+        return JsonResponse(
+            {"detail": "Ички рақамни яратишда муаммо. Илтимос, яна уриниб кўринг."},
+            status=500
+        )
+        
     return JsonResponse({
         "message": "Буюртма муваффақиятли яратилди.",
         "buyurtma_id": obj.id,
+        "order_num": obj.order_num,  # 🆕 клиентга ҳам берамиз
         "status": obj.buyurtma_statusi,
         "pay_status": obj.pay_status,
         "sana": str(obj.sana),
         "vaqt": str(obj.vaqt),
         "manzil": obj.manzil,
-        "coords": {"lat": float(lat), "lng": float(lng), "source": obj.location_source, "accuracy": obj.location_accuracy}
+        "coords": {
+            "lat": float(obj.lat),
+            "lng": float(obj.lng),
+            "source": obj.location_source,
+            "accuracy": obj.location_accuracy
+        }
     }, status=201)
