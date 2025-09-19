@@ -31,11 +31,12 @@ class Buyurtma(models.Model):
 
     PAY_STATUS = (
         ("none", "Йўқ"),
-        ("pend_pay", "Кутилмоқда"),
+        ("waiting_for_payment", "Онлайн тўлаш кутилмоқда"),
+        ("pending", "Онлайн жараёнда"),        
+        ("completed_online", "Онлайн тўланди"),
         ("cash", "Нақд"),
-        ("online", "Онлайн"),
     )
-    pay_status = models.CharField(max_length=8, choices=PAY_STATUS, default="none")
+    pay_status = models.CharField(max_length=55, choices=PAY_STATUS, default="none")
 
     kuryer = models.ForeignKey(Kuryer, on_delete=models.SET_NULL, null=True, blank=True, related_name="buyurtmalar")
     kuryer_name = models.CharField(max_length=55, blank=True, null=True)
@@ -58,7 +59,7 @@ class Buyurtma(models.Model):
                                                     validators=[MaxValueValidator(5000)])
     LOCATION_SOURCES = (("tg", "telegram"), ("geocode", "geocode"), ("manual", "manual"))
     location_source = models.CharField(max_length=16, choices=LOCATION_SOURCES, default="manual")
-
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)  # 💧 Сув суммаси
     class Meta:
         db_table = "buyurtmalar"
         verbose_name = "Буюртма"

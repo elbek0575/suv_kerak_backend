@@ -1,8 +1,10 @@
 # accounts/views.py
+from typing import List, Dict, Any, Optional
 from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 from django.conf import settings
-from django.db import connection               # ✅ Django connection
+from django.db import connection, transaction        # ✅ Django connection
 from datetime import datetime
 import json, re, time, requests
 from django.contrib.auth.hashers import make_password, check_password
@@ -181,3 +183,144 @@ def boss_login(request):
          "name": name, "lang": lang, "last_active_at": now.isoformat()},
         json_dumps_params={"ensure_ascii": False}
     )
+ 
+
+# Сув нархини белгилашда давр қиймати   
+PERIOD_MAP = {
+    # Бир ойда / Бир йилда учун қисқа-лунда инглизча қийматлар
+    "bir_oyda": "monthly",
+    "bir_yilda": "yearly",
+}
+
+
+# Сув нархини белгилашда ёрдамчи функция   
+def _normalize_end(v: Optional[Any]) -> Optional[int]:
+    """
+    'Чексиз' учун Python None қайтариб, JSONBда null сақлаймиз.
+    Қолган ҳолларда бутун сонга мослаштирамиз.
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in {"", "inf", "infinite", "∞", "cheksiz", "чексиз"}:
+            return None
+        # рақамли матн бўлса
+        if s.isdigit():
+            return int(s)
+        raise ValueError("end not valid")
+    if isinstance(v, (int, float)):
+        return int(v)
+    raise ValueError("end not valid")
+
+# Сув нархини белгилашда ёрдамчи функция
+def _validate_rules(rules: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    start/end/price майдонларини текшириш, сортлаш ва ихчамлаш.
+    """
+    cleaned = []
+    for r in rules:
+        try:
+            start = int(r["start"])
+            end   = _normalize_end(r.get("end"))
+            price = int(r["price"])
+        except Exception:
+            raise ValueError("Rule item is invalid. Need {start:int, end:int|null, price:int}")
+
+        if start < 0 or price < 0:
+            raise ValueError("start/price must be non-negative")
+
+        if end is not None and end < start:
+            raise ValueError("end must be >= start (or null for infinite)")
+
+        cleaned.append({"start": start, "end": end, "price": price})
+
+    # start бўйича сортлаймиз ва кесишмасликни текширамиз
+    cleaned.sort(key=lambda x: x["start"])
+    for i in range(1, len(cleaned)):
+        prev = cleaned[i-1]
+        cur  = cleaned[i]
+        prev_end = prev["end"]
+        if prev_end is None:
+            raise ValueError("Infinite (null) end must be the last rule only")
+        if cur["start"] <= prev_end:
+            raise ValueError("Rules must not overlap: each next.start must be > previous.end")
+
+    return cleaned
+
+# Сув нархини белгилаш функцияси
+@csrf_exempt
+@require_http_methods(["POST"])
+def set_business_prices(request):
+    """
+    POST /accounts/set-business-prices
+
+    JSON мисол (скринга мос):
+    {
+      "business_id": 1,
+      "bir_oyda": true,          // ёки "bir_yilda": true (иккаласи бир вақтда true бўлмасин)
+      "rules": [
+        {"start": 0,   "end": 100, "price": 10000},
+        {"start": 101, "end": 300, "price": 9000},
+        {"start": 301, "end": 500, "price": 8000},
+        {"start": 501, "end": null, "price": 7500}   // ЧЕКСИЗ → null
+      ]
+    }
+    Қайтаради:
+    {
+      "status": "ok",
+      "period": "monthly" | "yearly",
+      "rules": [...],
+      "business_id": 1
+    }
+    """
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"status": "error", "detail": "JSON noto‘g‘ri"}, status=400)
+
+    business_id = payload.get("business_id")
+    bir_oyda    = bool(payload.get("bir_oyda"))
+    bir_yilda   = bool(payload.get("bir_yilda"))
+    rules       = payload.get("rules", [])
+
+    if not business_id:
+        return JsonResponse({"status": "error", "detail": "business_id talab qilinadi"}, status=400)
+
+    # Давр танлови: фақат бири true бўлсин
+    if bir_oyda == bir_yilda:
+        return JsonResponse({"status": "error", "detail": "Bir davrni tanlang: faqat bir_oyda yoki bir_yilda"}, status=400)
+
+    period_key = "bir_oyda" if bir_oyda else "bir_yilda"
+    period_val = PERIOD_MAP[period_key]  # 'monthly' ёки 'yearly'
+
+    try:
+        cleaned_rules = _validate_rules(rules)
+    except ValueError as e:
+        return JsonResponse({"status": "error", "detail": str(e)}, status=400)
+
+    # JSONB учун Python объектини dump қиламиз
+    rules_json = json.dumps(cleaned_rules, ensure_ascii=False)
+
+    # Бевосита SQL орқали accounts_business’ни янгилаймиз
+    # (Моделингизда майдонлар ҳозирча йўқ бўлгани учун шу йўл қулай)
+    with transaction.atomic():
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE public.accounts_business
+                   SET narxlar_diap_davri = %s,
+                       service_price_rules = %s
+                 WHERE id = %s
+                """,
+                [period_val, rules_json, business_id],
+            )
+            if cur.rowcount == 0:
+                return JsonResponse({"status": "error", "detail": "business not found"}, status=404)
+
+    return JsonResponse({
+        "status": "ok",
+        "period": period_val,
+        "rules": cleaned_rules,
+        "business_id": business_id,
+    }, status=200)
