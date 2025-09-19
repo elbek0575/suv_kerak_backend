@@ -1,21 +1,21 @@
 # orders/views.py
 from django.shortcuts import render
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseNotAllowed
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_GET, require_POST
-from django.db import transaction, connection, IntegrityError
-from django.db.models import F
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
+from django.db import transaction, connection, IntegrityError, transaction
+from django.db.models import F, Sum
 from django.db.models.functions import Coalesce
 from datetime import date
 import json
 from datetime import datetime
+from django.utils.dateparse import parse_date
 from django.utils import timezone
 from zoneinfo import ZoneInfo
 from accounts.models import Business
 from .models import Buyurtma
 from decimal import Decimal, InvalidOperation
-import os, requests
-import re
+import os, requests, re
 import logging
 
 
@@ -140,17 +140,18 @@ def _format_segment(n: int, min_width: int = 2) -> str:
     """
     s = str(int(n))
     result = s.zfill(min_width) if len(s) < min_width else s
-    print(f"Икки разрядли сигмент {result}")
+    #print(f"Икки разрядли сигмент {result}")
     return result
+
 
 def _next_order_num(suv_soni: int) -> str:
     """
-    Йил/ой/кун бўйича ЖАМИ БУЮРТМАЛАР сонига suv_soni'ни қўшиб,
-    order_num сегментларини яратади.
+    Йил/ой/кун кесимидаги ЖАМИ СУВ (бутилка) сонини ҳисоблайди.
+    Олдинги buyurtmalar'dаги suv_soni суммасини олади ва
+    жорий suv_soni'ни қўшиб сегментларни беради.
     База мутлақо бўш бўлса — "01-01-01".
     """
     suv_soni = int(suv_soni or 0)
-    print(f"Буюртма сони: {suv_soni} та")
     if suv_soni <= 0:
         suv_soni = 1  # хавфсизлик учун
 
@@ -160,21 +161,29 @@ def _next_order_num(suv_soni: int) -> str:
     m_start = today.replace(day=1)
 
     with transaction.atomic():
-        # Бир вақтда фақат битта воркер санаши учун: advisory lock
+        # Бир вақтда фақат битта воркер санаши учун advisory lock
         with connection.cursor() as cur:
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ["buyurtma_order_num"])
 
-        total_all = Buyurtma.objects.all().only("id").count()
+        # База мутлақо бўшми?
+        total_all = Buyurtma.objects.only("id").count()
         if total_all == 0:
-            # База бўш бўлса ҳам аввало базавий 01-01-01 қайтарамиз
             return "01-01-01"
 
-        # ✅ Сиз айтганидек count() + suv_soni
-        y_count = Buyurtma.objects.filter(sana__gte=y_start, sana__lte=today).only("id").count() + suv_soni
-        m_count = Buyurtma.objects.filter(sana__gte=m_start, sana__lte=today).only("id").count() + suv_soni
-        d_count = Buyurtma.objects.filter(sana=today).only("id").count() + suv_soni
+        # 🔢 Олдинги бутилка жами (order эмас, aynan suv_soni суммаси)
+        y_sum = Buyurtma.objects.filter(sana__gte=y_start, sana__lte=today)\
+                 .aggregate(total=Coalesce(Sum("suv_soni"), 0))["total"]
+        m_sum = Buyurtma.objects.filter(sana__gte=m_start, sana__lte=today)\
+                 .aggregate(total=Coalesce(Sum("suv_soni"), 0))["total"]
+        d_sum = Buyurtma.objects.filter(sana=today)\
+                 .aggregate(total=Coalesce(Sum("suv_soni"), 0))["total"]
 
-        # Формат: YY-MM-DD сегментлар каби, камида 2 разряд
+        # Жорий buyurtma бутилкаларини қўшамиз
+        y_count = int(y_sum) + suv_soni
+        m_count = int(m_sum) + suv_soni
+        d_count = int(d_sum) + suv_soni
+
+        # Формат: камида 2 разряд (масалан 03-03-03)
         return f"{_format_segment(y_count, 2)}-{_format_segment(m_count, 2)}-{_format_segment(d_count, 2)}"
     
     
@@ -244,7 +253,71 @@ def _inc_month_year_counters(business_id: int, suv_soni: int) -> int:
         yil_bosh_sotil_suv_soni = Coalesce(F("yil_bosh_sotil_suv_soni"), 0) + suv_soni,
     )
 
+# ------------------------------
+# Буюртмада сумма {ammount}ни аниклаш
+# ------------------------------
+def _calc_amount_for_order(business_id: int, suv_soni: int) -> tuple[Decimal, str, int, int]:
+    """
+    business_id ва suv_soni бўйича сумма (amount)ни ҳисоблайди.
+    Кайтарилади: (amount, period, counter_value, unit_price)
 
+    period: 'monthly' | 'yearly'
+    counter_value: narx tanlashда ишлатилган ҳисоблагич қиймати (ой/йил бошидан)
+    unit_price: танланган диапазон бўйича 1 сув нархи
+    """
+    suv_soni = int(suv_soni or 0)
+    if suv_soni <= 0:
+        raise ValueError("suv_soni > 0 бўлиши керак")
+
+    # 🔒 бизнес қаторини қулфлаб ўқимоқдамиз (атомар ҳисоб)
+    biz = (
+        Business.objects
+        .select_for_update()
+        .only("narxlar_diap_davri", "oy_bosh_sotil_suv_soni", "yil_bosh_sotil_suv_soni", "service_price_rules")
+        .get(id=business_id)
+    )
+
+    period = (biz.narxlar_diap_davri or "").strip().lower()
+    if period not in {"monthly", "yearly"}:
+        # конфиг йўқ/нотўғри бўлса — 0 сўм
+        return Decimal("0"), period or "monthly", 0, 0
+
+    counter_value = int(biz.oy_bosh_sotil_suv_soni or 0) if period == "monthly" \
+                    else int(biz.yil_bosh_sotil_suv_soni or 0)
+
+    # JSONB -> Python list[dict]
+    rules = biz.service_price_rules or []
+    # хавфсизлик: start бўйича сортлаймиз
+    try:
+        rules = sorted(rules, key=lambda r: int(r.get("start", 0)))
+    except Exception:
+        rules = []
+
+    unit_price = 0
+    for r in rules:
+        try:
+            start = int(r.get("start", 0))
+            end_raw = r.get("end", None)
+            end = None if end_raw is None else int(end_raw)
+            price = int(r.get("price", 0))
+        except Exception:
+            continue
+
+        if counter_value >= start and (end is None or counter_value <= end):
+            unit_price = price
+            break
+
+    # агар ҳеч бири тўғри келмаса, охирги қоида end=null бўлса шуни, акс ҳолда 0 оламиз
+    if unit_price == 0 and rules:
+        last = rules[-1]
+        if last.get("end") is None:
+            try:
+                unit_price = int(last.get("price", 0))
+            except Exception:
+                unit_price = 0
+
+    amount = Decimal(str(unit_price)) * Decimal(str(suv_soni))
+    return amount, period, counter_value, unit_price
 
 
 # ------------------------------
@@ -342,9 +415,11 @@ def create_buyurtma(request):
     while attempt < 5:
         attempt += 1
         order_num = _next_order_num(suv_soni)
-        print(f"Ордер равами {order_num}")
+        print(f"Ордер рақами {order_num}")
         try:
             with transaction.atomic():
+                # 🆕 1) (ammount) Буюртма суммасини ҳисоблаш
+                amount, period, used_counter, unit_price = _calc_amount_for_order(business_id, suv_soni)
                 obj = Buyurtma.objects.create(
                     business_id=business_id,
                     sana=now_uz.date(),
@@ -361,19 +436,23 @@ def create_buyurtma(request):
                     location_accuracy=(int(acc) if acc else None),
                     location_source=src if src in {"tg", "manual", "geocode"} else "manual",
                     order_num=order_num,  # 🆕
+                    amount=amount, # Буюртма суммаси
                 )
                 
-                 # 🆕 Ой/Йил бошидан сотилган сув сонини increment қиламиз
+                 # 🆕 Ой/Йил бошидан сотилган сув сонини increment қиламиз (Автомар)
                 updated = _inc_month_year_counters(business_id, suv_soni)
                 if updated == 0:
                     logger.warning("Business %s topilmadi, counters yangilanmadi", business_id)
+                    
+                logger.info("Price calc: period=%s, counter=%s -> unit=%s, amount=%s",
+                            period, used_counter, unit_price, str(amount))
                 
             break  # муваффақиятли яратилди
         except IntegrityError as e:
             # Масалан, order_num unique бузилса — яна бир марта уринамиз
             last_err = e
             continue
-    print("attempt сигментида қўшилган разряд сони-", attempt, "та")        
+    #print("attempt сигментида қўшилган разряд сони-", attempt, "та")        
     if attempt >= 5 and last_err:
         return JsonResponse(
             {"detail": "Ички рақамни яратишда муаммо. Илтимос, яна уриниб кўринг."},
@@ -389,10 +468,85 @@ def create_buyurtma(request):
         "sana": str(obj.sana),
         "vaqt": str(obj.vaqt),
         "manzil": obj.manzil,
+        "suv_soni": suv_soni,
+        "suv_narxi": unit_price,
+        "tulov_summasi":amount,
         "coords": {
             "lat": float(obj.lat),
             "lng": float(obj.lng),
             "source": obj.location_source,
-            "accuracy": obj.location_accuracy
+            "accuracy": obj.location_accuracy,             
         }
     }, status=201)
+    
+# ------------------------------
+# Бажарилмаган буюртмаларни рўйхатини қайтариш учун ёрдамчи функция
+# ------------------------------    
+def _human_pay_status(code: str) -> str:
+    return "Онлайн тўланди" if (code or "").lower() == "completed_online" else "Тўланмаган"
+
+# ------------------------------
+# Бажарилмаган буюртмаларни рўйхатини қайтариш учун ёрдамчи функция
+# ------------------------------   
+def _point_wkt(lat, lng):
+    try:
+        return f"POINT ({float(lng)} {float(lat)})"
+    except Exception:
+        return None
+
+# ------------------------------
+# Бажарилмаган буюртмаларни рўйхатини қайтарувчи функция
+# ------------------------------   
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def list_pending_orders(request):
+    """
+    Кириш: business_id (GET query ёки POST JSON)
+    Чиқиш: скриндаги жадвал учун руйхат
+    """
+    # 1) business_id оламиз (GET ёки JSON)
+    if request.method == "GET":
+        business_id = request.GET.get("business_id")
+    else:
+        try:
+            import json
+            payload = json.loads((request.body or b"").decode("utf-8") or "{}")
+        except Exception:
+            payload = {}
+        business_id = payload.get("business_id")
+    print(f"business_id= {business_id}")
+    try:
+        business_id = int(business_id)
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "business_id талаб қилинади (integer)."}, status=400)
+
+    # 2) pending буюртмаларни оламиз (охиргилари аввал)
+    qs = (Buyurtma.objects
+          .filter(business_id=business_id, buyurtma_statusi="pending")
+          .order_by("-sana", "-vaqt"))
+
+    rows = []
+    total_suv_soni = 0
+
+    for o in qs:
+        buyurtma_sanasi = o.sana.strftime("%d.%m.%y") if o.sana else ""
+        buyurtma_vaqti  = o.vaqt.strftime("%H:%M")   if o.vaqt else ""
+
+        rows.append({
+            "buyurtma_sanasi":   buyurtma_sanasi,                  # дд.мм.гг
+            "buyurtma_vaqti":    buyurtma_vaqti,                   # чч.мм
+            "izoh":              (o.manzil_izoh or ""),            # манзил изоҳ
+            "buyurtmachi_id":    o.client_tg_id,                   # telegram id
+            "buyurtma_id_raqami": o.order_num,                     # ичкий рақам
+            "suv_soni":          int(o.suv_soni or 0),
+            "location":          _point_wkt(o.lat, o.lng),         # "POINT (lng lat)"
+            "tulov_statusi":     _human_pay_status(o.pay_status),  # Онлайн тўланди / Тўланмаган
+        })
+        total_suv_soni += int(o.suv_soni or 0)
+
+    return JsonResponse({
+        "business_id": business_id,
+        "count": len(rows),
+        "suv_soni_jami": total_suv_soni,
+        "items": rows,
+    }, status=200)

@@ -21,7 +21,7 @@ class Buyurtma(models.Model):
     ORDER_STATUS = (
         ("pending", "Кутилмоқда"),
         ("assigned", "Бириктирилди"),
-        ("accepted", "Қабул қилинди"),
+        #("accepted", "Қабул қилинди"),
         ("on_way", "Йўлда"),
         ("delivered", "Топширилди"),
         ("failed", "Бажарилмади"),

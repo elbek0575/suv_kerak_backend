@@ -1,8 +1,9 @@
 # orders/urls.py
-from django.urls import path
-from .views import main_menu_stats, create_buyurtma
+from django.urls import path, re_path
+from .views import main_menu_stats, create_buyurtma, list_pending_orders
 
 urlpatterns = [
     path("main-menu-stats/", main_menu_stats, name="main_menu_stats"),
     path("create/", create_buyurtma, name="create_buyurtma"),
+    re_path(r"^pending-orders/?$", list_pending_orders, name="list_pending_orders"),
 ]
