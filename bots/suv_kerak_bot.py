@@ -1,5 +1,5 @@
 # bots/suv_kerak_bot.py
-import os
+import sys, os
 import asyncio
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode, ContentType
@@ -41,6 +41,10 @@ dp = Dispatcher()
 
 logger = logging.getLogger("bots")
 
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # 📍 Геолокацияга жавоб бериш (v3)
 @dp.message(F.content_type == ContentType.LOCATION)
 async def handle_location(message: Message):
@@ -80,12 +84,34 @@ async def cmd_start(msg: Message):
 
 async def _process_update(body_text: str) -> None:
     update = Update.model_validate_json(body_text)
-    session = AiohttpSession()  # аргументсиз
-    # ⬇️ Бу ерда parse_mode берилади — конструкторда ЭМАС
+    session = AiohttpSession()
     bot_defaults = DefaultBotProperties(parse_mode=ParseMode.HTML)
     async with Bot(token=BOT_TOKEN, session=session, default=bot_defaults) as bot:
+        m = update.message
+        if m:
+            logger.info(
+                "From: %s %s (%s) | Chat: %s (%s) | Type: %s",
+                m.from_user.first_name,
+                (m.from_user.last_name or ""),
+                m.from_user.id,
+                m.chat.title or m.chat.full_name or "",
+                m.chat.id,
+                m.chat.type,
+            )
+            if m.caption:
+                logger.info("Caption: %s", m.caption)
+            if m.text:
+                logger.info("Text: %s", m.text)
         await dp.feed_update(bot, update)
 
+
+def _pretty_json(raw: str) -> str:
+    try:
+        obj = json.loads(raw)
+        return json.dumps(obj, ensure_ascii=False, indent=2)
+    except Exception:
+        # JSON эмас ёки кесилган бўлса — ўзини қайтариб қўямиз
+        return raw
 
 @csrf_exempt
 def aiogram_webhook_view(request):
@@ -99,7 +125,7 @@ def aiogram_webhook_view(request):
             return JsonResponse({"ok": True})
 
         # Диагностика учун қисқартириб логлаймиз (ихтиёрий)
-        logger.info("Webhook body (trimmed): %s", body[:2048])
+        logger.info("Webhook body (pretty):\n%s", _pretty_json(body)[:4000])
 
         # async қисмни sync’дан чақириш
         async_to_sync(_process_update)(body)
