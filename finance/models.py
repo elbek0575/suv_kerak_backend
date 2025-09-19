@@ -1,7 +1,7 @@
 from django.db import models, transaction
 from django.core.exceptions import ValidationError
 from accounts.models import Business  # тенант
-
+from django.utils import timezone
 
 class CashMenedjer(models.Model):
     business = models.ForeignKey(Business, on_delete=models.PROTECT, null=True, blank=True)
@@ -408,3 +408,60 @@ class BusinessSystemAccount(models.Model):
             self.tizimdagi_balance = prev  # promo/бошқа турлар
 
         super().save(*args, **kwargs)
+        
+class Transaction(models.Model):
+    class Status(models.TextChoices):
+        PENDING   = "pending",   "pending"
+        SUCCESS   = "success",   "success"
+        FAILED    = "failed",    "failed"
+        CANCELED  = "canceled",  "canceled"
+
+    # id: serial4
+    id = models.AutoField(primary_key=True)
+
+    # transaction_id: varchar(50)
+    transaction_id = models.CharField(max_length=50, db_index=True)
+
+    # order_id: varchar(50)
+    order_id = models.CharField(max_length=50, db_index=True)
+
+    # amount: numeric(12,2)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    # status: varchar(20)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+
+    # created_at: timestamptz
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    # updated_at: timestamptz
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # cancel_time: timestamptz
+    cancel_time = models.DateTimeField(null=True, blank=True)
+
+    # reason: int4 (масалан, бекор қилиш сабаб коди)
+    reason = models.IntegerField(null=True, blank=True)
+
+    # id_tg_client: int8
+    id_tg_client = models.BigIntegerField(null=True, blank=True)
+
+    # tel_num_client: varchar(45)
+    tel_num_client = models.CharField(max_length=45, null=True, blank=True)
+
+    class Meta:
+        db_table = "transactions"
+        indexes = [
+            models.Index(fields=["transaction_id"]),
+            models.Index(fields=["order_id"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.transaction_id} | {self.order_id} | {self.status} | {self.amount}"
