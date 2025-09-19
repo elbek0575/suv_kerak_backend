@@ -143,12 +143,16 @@ def _format_segment(n: int, min_width: int = 2) -> str:
     print(f"Икки разрядли сигмент {result}")
     return result
 
-def _next_order_num() -> str:
+def _next_order_num(suv_soni: int) -> str:
     """
-    Йил/ой/кун бўйича жами буюртмалар сонидан келиб чиқиб `order_num` яратади.
+    Йил/ой/кун бўйича ЖАМИ БУЮРТМАЛАР сонига suv_soni'ни қўшиб,
+    order_num сегментларини яратади.
     База мутлақо бўш бўлса — "01-01-01".
-    Транзакцияда advisory lock ишлатилиб, бир пайтнинг ўзидаги сўровлар тўқнашмаслиги таъминланади.
     """
+    suv_soni = int(suv_soni or 0)
+    if suv_soni <= 0:
+        suv_soni = 1  # хавфсизлик учун
+
     now_uz = timezone.localtime(timezone.now())
     today   = now_uz.date()
     y_start = today.replace(month=1, day=1)
@@ -161,15 +165,18 @@ def _next_order_num() -> str:
 
         total_all = Buyurtma.objects.all().only("id").count()
         if total_all == 0:
+            # База бўш бўлса ҳам аввало базавий 01-01-01 қайтарамиз
             return "01-01-01"
 
-        y_count = Buyurtma.objects.filter(sana__gte=y_start, sana__lte=today).only("id").count() + 1
-        m_count = Buyurtma.objects.filter(sana__gte=m_start, sana__lte=today).only("id").count() + 1
-        d_count = Buyurtma.objects.filter(sana=today).only("id").count() + 1
+        # ✅ Сиз айтганидек count() + suv_soni
+        y_count = Buyurtma.objects.filter(sana__gte=y_start, sana__lte=today).only("id").count() + suv_soni
+        m_count = Buyurtma.objects.filter(sana__gte=m_start, sana__lte=today).only("id").count() + suv_soni
+        d_count = Buyurtma.objects.filter(sana=today).only("id").count() + suv_soni
 
-        # Формат: YYYYcount-MONcount-DAYcount (минимум “02-02-02” каби)
+        # Формат: YY-MM-DD сегментлар каби, камида 2 разряд
         return f"{_format_segment(y_count, 2)}-{_format_segment(m_count, 2)}-{_format_segment(d_count, 2)}"
-
+    
+    
 # ------------------------------
 # Бизнесс ҳудудни текшириш (PostGIS)
 # ------------------------------
@@ -219,7 +226,7 @@ def _within_business_area(business_id: int, lat: float, lng: float) -> bool:
     return ok
 
 # ------------------------------
-# Бизнесс ID ни йил ва ой бошидан буюртма сонини санаш
+# Бизнесс ID бўйича йил ва ой бошидан буюртма сонини санаш
 # ------------------------------
 def _inc_month_year_counters(business_id: int, suv_soni: int) -> int:
     """
@@ -333,7 +340,7 @@ def create_buyurtma(request):
     last_err = None
     while attempt < 5:
         attempt += 1
-        order_num = _next_order_num()
+        order_num = _next_order_num(suv_soni)
         try:
             with transaction.atomic():
                 obj = Buyurtma.objects.create(
