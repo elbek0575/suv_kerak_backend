@@ -150,6 +150,7 @@ def _next_order_num(suv_soni: int) -> str:
     База мутлақо бўш бўлса — "01-01-01".
     """
     suv_soni = int(suv_soni or 0)
+    print(f"Буюртма сони: {suv_soni} та")
     if suv_soni <= 0:
         suv_soni = 1  # хавфсизлик учун
 
