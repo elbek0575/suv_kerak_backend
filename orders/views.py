@@ -13,6 +13,7 @@ from django.utils.dateparse import parse_date
 from django.utils import timezone
 from zoneinfo import ZoneInfo
 from accounts.models import Business
+from finance.models import Transaction
 from .models import Buyurtma
 from decimal import Decimal, InvalidOperation
 import os, requests, re
@@ -495,6 +496,23 @@ def _point_wkt(lat, lng):
         return None
 
 # ------------------------------
+# Бажарилмаган буюртмаларни рўйхатини қайтариш учун онлайн туловлар маълумотларини кайтарувчи ёрдамчи функция
+# ------------------------------ 
+def _human_pay_status(code: str) -> str:
+    return "Онлайн тўланди" if (code or "").lower() == "completed_online" else "Тўланмаган"
+
+# ------------------------------
+# Бажарилмаган буюртмаларни рўйхатини қайтариш учун онлайн туловлар саналарини форматловчи ёрдамчи функция
+# ------------------------------ 
+def _fmt_dt(dt):
+    """ updated_at ни сана/вақтга форматлаймиз (UZ local time). """
+    if not dt:
+        return "", ""
+    dt = timezone.localtime(dt)
+    return dt.strftime("%d.%m.%y"), dt.strftime("%H:%M")
+
+
+# ------------------------------
 # Бажарилмаган буюртмаларни рўйхатини қайтарувчи функция
 # ------------------------------   
 @csrf_exempt
@@ -531,6 +549,27 @@ def list_pending_orders(request):
     for o in qs:
         buyurtma_sanasi = o.sana.strftime("%d.%m.%y") if o.sana else ""
         buyurtma_vaqti  = o.vaqt.strftime("%H:%M")   if o.vaqt else ""
+        
+        # 🔹 Тулув статуси (онлайн ёки йўқ)
+        human_status = _human_pay_status(o.pay_status)
+
+        # 🔹 Агар онлайн тўлов бўлса, transactions’дан тўловлар рўйхатини оламиз
+        payments = []
+        if human_status == "Онлайн тўланди":
+            # order_num = transactions.order_id билан боғланяпти
+            tx_qs = (Transaction.objects
+                     .filter(order_id=o.order_num)
+                     .order_by("-updated_at")
+                     .values("updated_at", "amount", "order_id"))
+
+            for tx in tx_qs:
+                p_date, p_time = _fmt_dt(tx["updated_at"])
+                payments.append({
+                    "pay_date": p_date,                   # дд.мм.гг
+                    "pay_time": p_time,                   # чч.мм
+                    "amount":   str(tx["amount"]),        # decimal -> str
+                    "order_id": tx["order_id"],
+                })
 
         rows.append({
             "buyurtma_sanasi":   buyurtma_sanasi,                  # дд.мм.гг
@@ -541,6 +580,8 @@ def list_pending_orders(request):
             "suv_soni":          int(o.suv_soni or 0),
             "location":          _point_wkt(o.lat, o.lng),         # "POINT (lng lat)"
             "tulov_statusi":     _human_pay_status(o.pay_status),  # Онлайн тўланди / Тўланмаган
+            # 🆕 Онлайн бўлса — ҳар бир тўлов алоҳида объект сифатида
+            "online_payments":    payments,                   # [] ёки [{pay_date,...}, ...]
         })
         total_suv_soni += int(o.suv_soni or 0)
 
