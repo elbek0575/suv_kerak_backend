@@ -335,7 +335,7 @@ def create_buyurtma(request):
             # Масалан, order_num unique бузилса — яна бир марта уринамиз
             last_err = e
             continue
-    print("attempt сигментини разрядда кўриниши!")        
+    print("attempt сигментини разрядда кўриниши!", attempt)        
     if attempt >= 5 and last_err:
         return JsonResponse(
             {"detail": "Ички рақамни яратишда муаммо. Илтимос, яна уриниб кўринг."},
