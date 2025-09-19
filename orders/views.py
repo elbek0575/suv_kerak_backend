@@ -4,6 +4,8 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from django.db import transaction, connection, IntegrityError
+from django.db.models import F
+from django.db.models.functions import Coalesce
 from datetime import date
 import json
 from datetime import datetime
@@ -138,7 +140,7 @@ def _format_segment(n: int, min_width: int = 2) -> str:
     """
     s = str(int(n))
     result = s.zfill(min_width) if len(s) < min_width else s
-    print(f"2 разрядли сигмент {result}")
+    print(f"Икки разрядли сигмент {result}")
     return result
 
 def _next_order_num() -> str:
@@ -215,6 +217,27 @@ def _within_business_area(business_id: int, lat: float, lng: float) -> bool:
     )
 
     return ok
+
+# ------------------------------
+# Бизнесс ID ни йил ва ой бошидан буюртма сонини санаш
+# ------------------------------
+def _inc_month_year_counters(business_id: int, suv_soni: int) -> int:
+    """
+    public.accounts_business.oy_bosh_sotil_suv_soni ва
+    public.accounts_business.yil_bosh_sotil_suv_soni ни атомар равишда oshiradi.
+    NULL -> 0 ҳисобланади, keyin + suv_soni қилади.
+    Қайтарилади: update қилинган қаторлар сони (0 ёки 1).
+    """
+    suv_soni = int(suv_soni or 0)
+    if suv_soni <= 0:
+        return 0
+    return Business.objects.filter(id=business_id).update(
+        oy_bosh_sotil_suv_soni = Coalesce(F("oy_bosh_sotil_suv_soni"), 0) + suv_soni,
+        yil_bosh_sotil_suv_soni = Coalesce(F("yil_bosh_sotil_suv_soni"), 0) + suv_soni,
+    )
+
+
+
 
 # ------------------------------
 # Буюртма яратиш
@@ -330,6 +353,12 @@ def create_buyurtma(request):
                     location_source=src if src in {"tg", "manual", "geocode"} else "manual",
                     order_num=order_num,  # 🆕
                 )
+                
+                 # 🆕 Ой/Йил бошидан сотилган сув сонини increment қиламиз
+                updated = _inc_month_year_counters(business_id, suv_soni)
+                if updated == 0:
+                    logger.warning("Business %s topilmadi, counters yangilanmadi", business_id)
+                
             break  # муваффақиятли яратилди
         except IntegrityError as e:
             # Масалан, order_num unique бузилса — яна бир марта уринамиз
