@@ -342,6 +342,7 @@ def create_buyurtma(request):
     while attempt < 5:
         attempt += 1
         order_num = _next_order_num(suv_soni)
+        print(f"Ордер равами {order_num}")
         try:
             with transaction.atomic():
                 obj = Buyurtma.objects.create(
