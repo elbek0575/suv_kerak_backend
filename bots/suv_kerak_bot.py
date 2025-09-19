@@ -42,7 +42,7 @@ dp = Dispatcher()
 logger = logging.getLogger("bots")
 
 # 📍 Геолокацияга жавоб бериш (v3)
-@dp.message(F.content_type == ContentType.LOCATION)  # yoki: @dp.message(lambda m: m.location is not None)
+@dp.message(F.content_type == ContentType.LOCATION)
 async def handle_location(message: Message):
     lat = message.location.latitude
     lng = message.location.longitude

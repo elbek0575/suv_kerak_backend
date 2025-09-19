@@ -80,36 +80,47 @@ LOGGING = {
     "disable_existing_loggers": False,
 
     "formatters": {
-        # middleware allaqachon JSON string beradi → faqat message'ni chiqaramiz
+        # сизда бор форматтер
         "jsonline": {"format": "%(message)s"},
+        # оддий формат ҳам керак бўлса
+        "simple": {"format": "%(asctime)s %(levelname)s %(name)s: %(message)s"},
     },
 
     "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "jsonline"},
+        # консоль — encoding қўйилмайди
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "jsonline",  # ёки "simple"
+            "level": "INFO",
+        },
+        # файл — мана шу ерда encoding берилади
+        "bot_file": {
+            "class": "logging.FileHandler",
+            "filename": BASE_DIR / "bot.log",
+            "formatter": "simple",
+            "level": "INFO",
+            "encoding": "utf-8",      # ✅ тўғри жой
+        },
     },
 
     "loggers": {
-        # Sizdagi mavjud access logger
-        "access":  {"handlers": ["console"], "level": "INFO", "propagate": False},
-
         # 👉 бот/вебхук логлари шу ерга тушади
-        "bots":    {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "orders":    {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "bots": {
+            "handlers": ["console", "bot_file"],   # консоль ва файлга ёзсин
+            "level": "INFO",
+            "propagate": False,
+        },
 
-        # (ихтиёрий) Aiogram логларини ҳам JSON’га буриш
-        "aiogram":               {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "aiogram.dispatcher":    {"handlers": ["console"], "level": "INFO", "propagate": False},
-        "aiogram.bot.api":       {"handlers": ["console"], "level": "INFO", "propagate": False},
-
-        # Django’нинг ортиқча трассаларини пасайтириш
-        "django":            {"handlers": ["console"], "level": "WARNING", "propagate": False},
-        "django.server":     {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        # қолганлар (ихтиёрий)
+        "aiogram":           {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "aiogram.dispatcher":{"handlers": ["console"], "level": "INFO", "propagate": False},
         "django.request":    {"handlers": ["console"], "level": "WARNING", "propagate": False},
     },
 
-    # Root logger'ни қаттиқ қилиб қўямиз — фақат ERROR↑ қолсин (ёки умуман CRITICAL ҳам бўлади)
+    # root каттиқ бўлмасин
     "root": {"handlers": ["console"], "level": "ERROR"},
 }
+
 
 
 MIDDLEWARE = [
