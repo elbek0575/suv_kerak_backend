@@ -125,7 +125,7 @@ def aiogram_webhook_view(request):
             return JsonResponse({"ok": True})
 
         # Диагностика учун қисқартириб логлаймиз (ихтиёрий)
-        logger.info("Webhook body (pretty):\n%s", _pretty_json(body)[:4000])
+        logger.info("Webhook body (pretty):\n%s", _pretty_json(body)[:2000])
 
         # async қисмни sync’дан чақириш
         async_to_sync(_process_update)(body)
